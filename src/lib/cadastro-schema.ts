@@ -105,6 +105,17 @@ export interface Preenchimento {
   countries: string[];
 }
 
+/** O que já foi cadastrado, para mostrar quando o cadastro está travado. */
+export interface ResumoCadastro {
+  plano: string | null;
+  destino: string | null;
+  dias: number | null;
+  franquia: string | null;
+  paises: string[];
+  ativacao: string | null;
+  fim: string | null;
+}
+
 /** Resposta de POST /api/consulta. */
 export interface Consulta {
   tipo: TipoChip;
@@ -124,6 +135,11 @@ export interface Consulta {
   preenchimento: Preenchimento | null;
   /** Já existe cadastro ativo para este chip/pedido. */
   jaCadastrado: boolean;
-  /** O cadastro existente já foi conferido pela equipe e não aceita mais alteração. */
+  /** Já existe cadastro enviado para este chip/pedido; não aceita mais alteração. */
   bloqueado: boolean;
+  /**
+   * Resumo do cadastro travado. Só vem com o CPF do cadastro ou do comprador: datas e
+   * países de viagem dizem quando alguém está fora de casa.
+   */
+  resumo: ResumoCadastro | null;
 }

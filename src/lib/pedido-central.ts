@@ -319,6 +319,8 @@ export async function consultar(dados: ConsultaDados): Promise<Consulta> {
   const pedido = dados.chip_type === 'fisico' ? await buscarPorIccid(dados.iccid!) : await buscarPorNumero(dados.order_number!);
   const [plano, existente] = await Promise.all([pedido ? planoDoPedido(pedido) : null, cadastroAtivo(dados, pedido)]);
   const bloqueado = estaBloqueado(existente);
+  const donoDoCadastro =
+    !!existente && (existente.cpf === dados.cpf || (!!pedido && soDigitos(pedido.customer_cpf) === dados.cpf));
 
   return {
     tipo: dados.chip_type,
@@ -329,6 +331,18 @@ export async function consultar(dados: ConsultaDados): Promise<Consulta> {
     preenchimento: bloqueado ? null : preenchimento(dados.cpf, existente, pedido, plano),
     jaCadastrado: !!existente,
     bloqueado,
+    resumo:
+      bloqueado && donoDoCadastro
+        ? {
+            plano: existente.plan_title ?? plano?.titulo ?? null,
+            destino: existente.plan_destination ?? plano?.destino ?? null,
+            dias: existente.plan_days ?? plano?.dias ?? null,
+            franquia: existente.plan_data ?? plano?.franquia ?? null,
+            paises: paisesDaLista(existente.countries),
+            ativacao: existente.travel_start ?? null,
+            fim: existente.travel_end ?? fimDaVigencia(existente.travel_start, existente.plan_days ?? plano?.dias),
+          }
+        : null,
   };
 }
 

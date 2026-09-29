@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { cadastroSchema, consultaSchema, type Consulta, type TipoChip } from '@/lib/cadastro-schema';
+import { cadastroSchema, consultaSchema, type Consulta, type ResumoCadastro, type TipoChip } from '@/lib/cadastro-schema';
 import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
 import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista, type PlanoComprado } from '@/lib/plano';
 
@@ -119,6 +119,7 @@ export function CadastroChip({
       }
       const c = dados as Consulta;
       if (c.bloqueado) {
+        setConsulta(c);
         setEtapa('bloqueado');
         return;
       }
@@ -624,6 +625,7 @@ export function CadastroChip({
               ser alterados por aqui. Para corrigir alguma informação, fale com o nosso suporte.
             </p>
           </div>
+          {consulta?.resumo && <ResumoDoCadastro resumo={consulta.resumo} />}
           <div className="space-y-3">
             <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" destaque />
             <button type="button" onClick={recomecar} className="botao-secundario w-full">
@@ -632,6 +634,34 @@ export function CadastroChip({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ResumoDoCadastro({ resumo }: { resumo: ResumoCadastro }) {
+  const linhas = [
+    { rotulo: 'Plano', valor: resumo.plano },
+    { rotulo: 'Destino', valor: resumo.destino },
+    { rotulo: 'Franquia', valor: resumo.franquia },
+    { rotulo: 'Período', valor: resumo.dias ? `${resumo.dias} dias` : null },
+    { rotulo: 'Data de ativação', valor: resumo.ativacao ? formatarDataBR(resumo.ativacao) : null },
+    { rotulo: 'Válido até', valor: resumo.fim ? formatarDataBR(resumo.fim) : null },
+    { rotulo: 'Países', valor: resumo.paises.length ? resumo.paises.join(', ') : null },
+  ].filter((l): l is { rotulo: string; valor: string } => !!l.valor);
+  if (linhas.length === 0) return null;
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 text-left">
+      <p className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+        Resumo do cadastro
+      </p>
+      <dl className="divide-y divide-slate-100">
+        {linhas.map((l) => (
+          <div key={l.rotulo} className="flex gap-4 px-4 py-2.5 text-sm">
+            <dt className="w-32 shrink-0 text-slate-500">{l.rotulo}</dt>
+            <dd className="font-medium text-slate-900">{l.valor}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
