@@ -721,7 +721,7 @@ function CartaoPlano({ plano }: { plano: PlanoComprado }) {
 
 function Passos({ etapa }: { etapa: Etapa }) {
   const itens: { chave: Etapa; texto: string }[] = [
-    { chave: 'chip', texto: 'Compra' },
+    { chave: 'chip', texto: 'Cadastro' },
     { chave: 'formulario', texto: 'Dados' },
     { chave: 'concluido', texto: 'Pronto' },
   ];
