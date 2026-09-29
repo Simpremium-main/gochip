@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cadastroSchema } from '@/lib/cadastro-schema';
-import { CadastroBloqueadoError, registrarCadastro } from '@/lib/pedido-central';
+import { CadastroBloqueadoError, CampoInvalidoError, registrarCadastro } from '@/lib/pedido-central';
 import { dentroDoLimite, ipDaRequisicao } from '@/lib/limite';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +38,9 @@ export async function POST(request: Request) {
   } catch (e) {
     if (e instanceof CadastroBloqueadoError) {
       return NextResponse.json({ error: e.message }, { status: 409 });
+    }
+    if (e instanceof CampoInvalidoError) {
+      return NextResponse.json({ error: e.message, campos: e.campos }, { status: 422 });
     }
     console.error('[api/cadastro]', (e as Error).message);
     return NextResponse.json({ error: 'Não foi possível salvar agora. Tente de novo em instantes.' }, { status: 502 });
