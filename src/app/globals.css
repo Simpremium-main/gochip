@@ -2,23 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background:
+      radial-gradient(1200px 400px at 50% -120px, rgba(37, 99, 235, 0.10), transparent 70%),
+      #f8fafc;
+  }
+}
+
 @layer components {
+  .cartao {
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-cartao;
+  }
   .campo {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900
-      outline-none transition focus:border-marca focus:ring-2 focus:ring-marca/20;
+    @apply h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-[15px] text-slate-900
+      placeholder:text-slate-400 outline-none transition
+      hover:border-slate-300 focus:border-marca focus:ring-4 focus:ring-marca/10;
+  }
+  textarea.campo {
+    @apply h-auto py-2.5;
   }
   .campo-erro {
-    @apply border-red-500 focus:border-red-500 focus:ring-red-500/20;
+    @apply border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/10;
   }
   .rotulo {
-    @apply mb-1 block text-sm font-medium text-slate-700;
+    @apply mb-1.5 block text-[13px] font-medium text-slate-700;
+  }
+  .ajuda {
+    @apply mt-1.5 text-xs text-slate-500;
+  }
+  .secao {
+    @apply text-xs font-semibold uppercase tracking-[0.08em] text-slate-400;
   }
   .botao {
-    @apply inline-flex w-full items-center justify-center rounded-lg bg-marca px-4 py-3 text-base font-semibold
-      text-white transition hover:bg-marca-escuro disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-marca px-4 text-[15px]
+      font-semibold text-white shadow-sm shadow-marca/30 transition
+      hover:bg-marca-escuro focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-marca/20
+      disabled:cursor-not-allowed disabled:opacity-60;
   }
   .botao-secundario {
-    @apply inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-3 text-base
-      font-medium text-slate-700 transition hover:bg-slate-50;
+    @apply inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-4
+      text-[15px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50;
   }
 }

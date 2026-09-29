@@ -36,7 +36,7 @@ const VAZIO: Formulario = {
   website: '',
 };
 
-const TIPO_TEXTO: Record<TipoChip, string> = { fisico: 'Chip físico', virtual: 'eSIM (chip virtual)' };
+const TIPO_TEXTO: Record<TipoChip, string> = { fisico: 'Chip físico', virtual: 'eSIM' };
 
 const hojeIso = () => {
   const d = new Date();
@@ -180,50 +180,68 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
 
   const classeCampo = (campo: string) => `campo ${erros[campo] ? 'campo-erro' : ''}`;
   const Erro = ({ campo }: { campo: string }) =>
-    erros[campo] ? <p className="mt-1 text-sm text-red-600">{erros[campo]}</p> : null;
+    erros[campo] ? <p className="mt-1.5 text-xs font-medium text-red-600">{erros[campo]}</p> : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <Passos etapa={etapa} />
 
       {erroGeral && (
-        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
           {erroGeral}
         </div>
       )}
 
       {etapa === 'chip' && (
-        <form onSubmit={consultar} noValidate className="space-y-4 rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <form onSubmit={consultar} noValidate className="cartao space-y-6 p-5 sm:p-7">
           <div>
-            <h1 className="text-xl font-semibold">Ative seu chip</h1>
-            <p className="mt-1 text-sm text-slate-600">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Ative seu chip</h1>
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
               Vamos localizar a sua compra no Mercado Livre e o plano que você comprou.
             </p>
           </div>
 
           <fieldset>
             <legend className="rotulo">Qual chip você comprou?</legend>
-            <div className="grid grid-cols-2 gap-2">
-              {(['fisico', 'virtual'] as TipoChip[]).map((t) => (
-                <label
-                  key={t}
-                  className={`cursor-pointer rounded-lg border px-3 py-2.5 text-center text-sm font-medium ${
-                    tipo === t ? 'border-marca bg-marca-claro/60 text-marca-escuro' : 'border-slate-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="tipo"
-                    className="sr-only"
-                    checked={tipo === t}
-                    onChange={() => {
-                      setTipo(t);
-                      setErros({});
-                    }}
-                  />
-                  {TIPO_TEXTO[t]}
-                </label>
-              ))}
+            <div className="grid grid-cols-2 gap-3">
+              {(['fisico', 'virtual'] as TipoChip[]).map((t) => {
+                const ativo = tipo === t;
+                return (
+                  <label
+                    key={t}
+                    className={`relative flex cursor-pointer flex-col gap-2 rounded-xl border p-3.5 transition ${
+                      ativo
+                        ? 'border-marca bg-marca-claro ring-4 ring-marca/10'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="tipo"
+                      className="sr-only"
+                      checked={ativo}
+                      onChange={() => {
+                        setTipo(t);
+                        setErros({});
+                      }}
+                    />
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+                        ativo ? 'bg-marca text-white' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      <Icone nome={t === 'fisico' ? 'chip' : 'esim'} className="h-5 w-5" />
+                    </span>
+                    <span className={`text-sm font-semibold ${ativo ? 'text-marca-profundo' : 'text-slate-800'}`}>
+                      {t === 'fisico' ? 'Chip físico' : 'eSIM'}
+                    </span>
+                    <span className="text-xs leading-snug text-slate-500">
+                      {t === 'fisico' ? 'Cartão enviado pelo correio' : 'Chip virtual, ativado por QR code'}
+                    </span>
+                  </label>
+                );
+              })}
             </div>
           </fieldset>
 
@@ -242,7 +260,7 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
                   setErros(({ iccid: _, ...r }) => r);
                 }}
               />
-              <p className="mt-1 text-xs text-slate-500">Impresso no cartão do chip, abaixo do código de barras.</p>
+              <p className="ajuda">Impresso no cartão do chip, abaixo do código de barras.</p>
               <Erro campo="iccid" />
             </div>
           ) : (
@@ -260,13 +278,13 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
                   setErros(({ order_number: _, ...r }) => r);
                 }}
               />
-              <p className="mt-1 text-xs text-slate-500">No app do Mercado Livre: Minhas compras → detalhe da compra.</p>
+              <p className="ajuda">No app do Mercado Livre: Minhas compras → detalhe da compra.</p>
               <Erro campo="order_number" />
             </div>
           )}
 
           <div>
-            <label htmlFor="cpf" className="rotulo">CPF de quem vai usar o chip</label>
+            <label htmlFor="cpf" className="rotulo">CPF da conta no Mercado Livre</label>
             <input
               id="cpf"
               inputMode="numeric"
@@ -282,194 +300,233 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
           </div>
 
           <button type="submit" className="botao" disabled={carregando}>
-            {carregando ? 'Consultando…' : 'Continuar'}
+            {carregando ? 'Consultando…' : <>Continuar <Icone nome="seta" className="h-4 w-4" /></>}
           </button>
         </form>
       )}
 
       {etapa === 'formulario' && consulta && (
-        <form onSubmit={enviar} noValidate className="space-y-5 rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-          <div className="rounded-lg bg-marca-claro/60 px-4 py-3 text-sm">
-            <p className="font-medium">
-              {TIPO_TEXTO[tipo]}
-              {consulta.iccid && <span className="ml-2 font-mono">{consulta.iccid}</span>}
-            </p>
-            {consulta.encontrado ? (
-              <p className="text-slate-700">Pedido do Mercado Livre terminado em <strong>{consulta.pedidoFinal}</strong></p>
+        <form onSubmit={enviar} noValidate className="space-y-5">
+          <div className="cartao overflow-hidden">
+            {plano ? (
+              <CartaoPlano plano={plano} />
             ) : (
-              <p className="text-slate-700">
-                Ainda não localizamos {tipo === 'fisico' ? 'este chip' : 'este pedido'} no Mercado Livre. Tudo bem:
-                envie o cadastro e nossa equipe faz o vínculo.
-              </p>
-            )}
-            {consulta.jaCadastrado && (
-              <p className="mt-1 text-amber-800">Já recebemos um cadastro deste chip. Enviar de novo substitui os dados anteriores.</p>
-            )}
-            <button type="button" onClick={recomecar} className="mt-2 text-sm font-medium text-marca underline">
-              Trocar chip ou pedido
-            </button>
-          </div>
-
-          {plano && <CartaoPlano plano={plano} />}
-
-          {!consulta.encontrado && tipo === 'fisico' && (
-            <div>
-              <label htmlFor="order_number_informado" className="rotulo">Número do pedido no Mercado Livre (se souber)</label>
-              <input
-                id="order_number_informado"
-                inputMode="numeric"
-                className={classeCampo('order_number')}
-                value={form.order_number}
-                onChange={(e) => alterar('order_number', e.target.value)}
-              />
-              <Erro campo="order_number" />
-            </div>
-          )}
-
-          <h2 className="text-lg font-semibold">Dados do titular</h2>
-          {consulta.preenchimento && (
-            <p className="-mt-3 text-sm text-slate-600">Preenchemos com os dados da compra. Confira e corrija se preciso.</p>
-          )}
-
-          <div>
-            <label htmlFor="full_name" className="rotulo">Nome completo *</label>
-            <input
-              id="full_name"
-              autoComplete="name"
-              className={classeCampo('full_name')}
-              value={form.full_name}
-              onChange={(e) => alterar('full_name', e.target.value)}
-            />
-            <Erro campo="full_name" />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <span className="rotulo">CPF</span>
-              <p className="campo bg-slate-50 text-slate-700">{cpf}</p>
-              <Erro campo="cpf" />
-            </div>
-            <div>
-              <label htmlFor="birth_date" className="rotulo">Data de nascimento</label>
-              <input
-                id="birth_date"
-                type="date"
-                autoComplete="bday"
-                className={classeCampo('birth_date')}
-                value={form.birth_date}
-                onChange={(e) => alterar('birth_date', e.target.value)}
-              />
-              <Erro campo="birth_date" />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="phone" className="rotulo">Telefone / WhatsApp *</label>
-            <input
-              id="phone"
-              type="tel"
-              autoComplete="tel"
-              placeholder="(11) 91234-5678"
-              className={classeCampo('phone')}
-              value={form.phone}
-              onChange={(e) => alterar('phone', e.target.value)}
-            />
-            <Erro campo="phone" />
-          </div>
-
-          <div>
-            <label htmlFor="email" className="rotulo">E-mail *</label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              className={classeCampo('email')}
-              value={form.email}
-              onChange={(e) => alterar('email', e.target.value)}
-            />
-            <Erro campo="email" />
-          </div>
-
-          <h2 className="text-lg font-semibold">Ativação</h2>
-
-          <div>
-            <label htmlFor="travel_start" className="rotulo">Data de ativação *</label>
-            <input
-              id="travel_start"
-              type="date"
-              min={hojeIso()}
-              className={classeCampo('travel_start')}
-              value={form.travel_start}
-              onChange={(e) => alterar('travel_start', e.target.value)}
-            />
-            <Erro campo="travel_start" />
-            {vigenciaFim && (
-              <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                Seu plano vale de <strong>{formatarDataBR(form.travel_start)}</strong> até{' '}
-                <strong>{formatarDataBR(vigenciaFim)}</strong> ({plano!.dias} dias).
-              </p>
-            )}
-          </div>
-
-          <div>
-            <span className="rotulo">Países que vai visitar *</span>
-            {cobertura.length === 1 ? (
-              <p className="text-sm text-slate-700">
-                Seu plano cobre <strong>{cobertura[0]}</strong>.
-              </p>
-            ) : cobertura.length > 1 ? (
-              <div className={`rounded-lg border p-3 ${erros.countries ? 'border-red-400' : 'border-slate-300'}`}>
-                <p className="mb-2 text-xs text-slate-500">
-                  Seu plano cobre {cobertura.length} países. Marque os que vai visitar
-                  {form.countries.length > 0 && <> ({form.countries.length} marcado{form.countries.length > 1 ? 's' : ''})</>}.
+              <div className="p-5">
+                <p className="secao">Sua compra</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                  Ainda não localizamos {tipo === 'fisico' ? 'este chip' : 'este pedido'} no Mercado Livre. Tudo bem:
+                  envie o cadastro e nossa equipe faz o vínculo.
                 </p>
-                {cobertura.length > 8 && (
-                  <input
-                    type="search"
-                    placeholder="Buscar país"
-                    className="campo mb-2"
-                    value={filtroPais}
-                    onChange={(e) => setFiltroPais(e.target.value)}
-                  />
-                )}
-                <div className="grid max-h-64 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
-                  {paisesVisiveis.map((p) => (
-                    <label key={p} className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-slate-50">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-marca"
-                        checked={form.countries.includes(p)}
-                        onChange={() => alternarPais(p)}
-                      />
-                      {p}
-                    </label>
-                  ))}
-                  {paisesVisiveis.length === 0 && <p className="text-sm text-slate-500">Nenhum país com esse nome no seu plano.</p>}
-                </div>
               </div>
-            ) : (
-              <input
-                id="countries_texto"
-                placeholder="Ex.: Portugal, Espanha"
-                className={classeCampo('countries')}
-                value={form.countries_texto}
-                onChange={(e) => alterar('countries_texto', e.target.value)}
-              />
             )}
-            <Erro campo="countries" />
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-sm">
+              <span className="text-slate-600">
+                {TIPO_TEXTO[tipo]}
+                {consulta.iccid && <span className="ml-1.5 font-mono text-xs text-slate-500">{consulta.iccid}</span>}
+                {consulta.pedidoFinal && <> · pedido final <strong className="text-slate-800">{consulta.pedidoFinal}</strong></>}
+              </span>
+              <button type="button" onClick={recomecar} className="text-sm font-medium text-marca hover:text-marca-escuro">
+                Trocar
+              </button>
+            </div>
+            {consulta.jaCadastrado && (
+              <p className="border-t border-amber-100 bg-amber-50 px-5 py-2.5 text-sm text-amber-800">
+                Já recebemos um cadastro deste chip. Enviar de novo substitui os dados anteriores.
+              </p>
+            )}
           </div>
 
-          <div>
-            <label htmlFor="observation" className="rotulo">Observações</label>
-            <textarea
-              id="observation"
-              rows={3}
-              className={classeCampo('observation')}
-              value={form.observation}
-              onChange={(e) => alterar('observation', e.target.value)}
-            />
-            <Erro campo="observation" />
-          </div>
+          <section className="cartao space-y-5 p-5 sm:p-7">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight">Dados do titular</h2>
+              {consulta.preenchimento && (
+                <p className="mt-1 text-sm text-slate-500">Preenchemos com os dados da compra. Confira e corrija se preciso.</p>
+              )}
+            </div>
+
+            {!consulta.encontrado && tipo === 'fisico' && (
+              <div>
+                <label htmlFor="order_number_informado" className="rotulo">Número do pedido no Mercado Livre (se souber)</label>
+                <input
+                  id="order_number_informado"
+                  inputMode="numeric"
+                  className={classeCampo('order_number')}
+                  value={form.order_number}
+                  onChange={(e) => alterar('order_number', e.target.value)}
+                />
+                <Erro campo="order_number" />
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="full_name" className="rotulo">Nome completo</label>
+              <input
+                id="full_name"
+                autoComplete="name"
+                className={classeCampo('full_name')}
+                value={form.full_name}
+                onChange={(e) => alterar('full_name', e.target.value)}
+              />
+              <Erro campo="full_name" />
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div>
+                <span className="rotulo">CPF da conta no Mercado Livre</span>
+                <p className="campo flex items-center bg-slate-50 text-slate-600">{cpf}</p>
+                <Erro campo="cpf" />
+              </div>
+              <div>
+                <label htmlFor="birth_date" className="rotulo">
+                  Data de nascimento <span className="font-normal text-slate-400">(opcional)</span>
+                </label>
+                <input
+                  id="birth_date"
+                  type="date"
+                  autoComplete="bday"
+                  className={classeCampo('birth_date')}
+                  value={form.birth_date}
+                  onChange={(e) => alterar('birth_date', e.target.value)}
+                />
+                <Erro campo="birth_date" />
+              </div>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div>
+                <label htmlFor="phone" className="rotulo">Telefone / WhatsApp</label>
+                <input
+                  id="phone"
+                  type="tel"
+                  autoComplete="tel"
+                  placeholder="(11) 91234-5678"
+                  className={classeCampo('phone')}
+                  value={form.phone}
+                  onChange={(e) => alterar('phone', e.target.value)}
+                />
+                <Erro campo="phone" />
+              </div>
+              <div>
+                <label htmlFor="email" className="rotulo">E-mail</label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  className={classeCampo('email')}
+                  value={form.email}
+                  onChange={(e) => alterar('email', e.target.value)}
+                />
+                <Erro campo="email" />
+              </div>
+            </div>
+          </section>
+
+          <section className="cartao space-y-5 p-5 sm:p-7">
+            <h2 className="text-lg font-semibold tracking-tight">Ativação</h2>
+
+            <div>
+              <label htmlFor="travel_start" className="rotulo">Data de ativação</label>
+              <input
+                id="travel_start"
+                type="date"
+                min={hojeIso()}
+                className={classeCampo('travel_start')}
+                value={form.travel_start}
+                onChange={(e) => alterar('travel_start', e.target.value)}
+              />
+              <Erro campo="travel_start" />
+              {vigenciaFim && (
+                <div className="mt-3 flex items-center gap-3 rounded-xl border border-marca-borda bg-marca-claro px-4 py-3">
+                  <Icone nome="calendario" className="h-5 w-5 shrink-0 text-marca" />
+                  <p className="text-sm text-marca-profundo">
+                    Válido de <strong>{formatarDataBR(form.travel_start)}</strong> até{' '}
+                    <strong>{formatarDataBR(vigenciaFim)}</strong>
+                    <span className="text-marca-profundo/70"> · {plano!.dias} dias</span>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <span className="rotulo">Países que vai visitar</span>
+              {cobertura.length === 1 ? (
+                <div className="flex items-center gap-2 text-sm text-slate-700">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-marca px-3 py-1.5 text-sm font-medium text-white">
+                    <Icone nome="check" className="h-3.5 w-3.5" /> {cobertura[0]}
+                  </span>
+                  <span className="text-slate-500">incluído no seu plano</span>
+                </div>
+              ) : cobertura.length > 1 ? (
+                <div className={`rounded-xl border p-3.5 ${erros.countries ? 'border-red-400' : 'border-slate-200'}`}>
+                  <div className="mb-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+                    <span>Seu plano cobre {cobertura.length} países. Toque para marcar.</span>
+                    {form.countries.length > 0 && (
+                      <span className="shrink-0 rounded-full bg-marca-claro px-2 py-0.5 font-semibold text-marca">
+                        {form.countries.length} selecionado{form.countries.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                  {cobertura.length > 8 && (
+                    <div className="relative mb-3">
+                      <Icone nome="busca" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="search"
+                        placeholder="Buscar país"
+                        className="campo h-10 pl-9 text-sm"
+                        value={filtroPais}
+                        onChange={(e) => setFiltroPais(e.target.value)}
+                      />
+                    </div>
+                  )}
+                  <div className="flex max-h-60 flex-wrap gap-2 overflow-y-auto">
+                    {paisesVisiveis.map((p) => {
+                      const marcado = form.countries.includes(p);
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          aria-pressed={marcado}
+                          onClick={() => alternarPais(p)}
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
+                            marcado
+                              ? 'border-marca bg-marca font-medium text-white'
+                              : 'border-slate-200 bg-white text-slate-700 hover:border-marca-borda hover:bg-marca-claro'
+                          }`}
+                        >
+                          {marcado && <Icone nome="check" className="h-3.5 w-3.5" />}
+                          {p}
+                        </button>
+                      );
+                    })}
+                    {paisesVisiveis.length === 0 && <p className="text-sm text-slate-500">Nenhum país com esse nome no seu plano.</p>}
+                  </div>
+                </div>
+              ) : (
+                <input
+                  id="countries_texto"
+                  placeholder="Ex.: Portugal, Espanha"
+                  className={classeCampo('countries')}
+                  value={form.countries_texto}
+                  onChange={(e) => alterar('countries_texto', e.target.value)}
+                />
+              )}
+              <Erro campo="countries" />
+            </div>
+
+            <div>
+              <label htmlFor="observation" className="rotulo">
+                Observações <span className="font-normal text-slate-400">(opcional)</span>
+              </label>
+              <textarea
+                id="observation"
+                rows={3}
+                className={classeCampo('observation')}
+                value={form.observation}
+                onChange={(e) => alterar('observation', e.target.value)}
+              />
+              <Erro campo="observation" />
+            </div>
+          </section>
 
           {/* Armadilha para robôs: invisível para pessoas. */}
           <input
@@ -483,42 +540,44 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
             onChange={(e) => alterar('website', e.target.value)}
           />
 
-          <div>
-            <label className="flex items-start gap-3 text-sm text-slate-700">
+          <div className="space-y-4">
+            <label className="flex items-start gap-3 text-sm leading-relaxed text-slate-600">
               <input
                 type="checkbox"
-                className="mt-0.5 h-5 w-5 accent-marca"
+                className="mt-0.5 h-5 w-5 shrink-0 rounded accent-marca"
                 checked={form.lgpd}
                 onChange={(e) => alterar('lgpd', e.target.checked)}
               />
               <span>Autorizo a SimPremium a usar estes dados para ativar e dar suporte à linha, conforme a LGPD.</span>
             </label>
             <Erro campo="lgpd" />
-          </div>
 
-          <button type="submit" className="botao" disabled={carregando}>
-            {carregando ? 'Enviando…' : 'Enviar cadastro'}
-          </button>
+            <button type="submit" className="botao" disabled={carregando}>
+              {carregando ? 'Enviando…' : 'Enviar cadastro'}
+            </button>
+          </div>
         </form>
       )}
 
       {etapa === 'concluido' && resultado && (
-        <div className="space-y-4 rounded-xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-200">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-marca-claro text-2xl text-marca">
-            ✓
+        <div className="cartao space-y-5 p-7 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-marca-claro ring-8 ring-marca-claro/50">
+            <Icone nome="check" className="h-7 w-7 text-marca" />
           </div>
-          <h1 className="text-xl font-semibold">{resultado.atualizado ? 'Cadastro atualizado!' : 'Cadastro recebido!'}</h1>
-          {resultado.vigenciaFim && (
-            <p className="text-sm text-slate-700">
-              Ativação em <strong>{formatarDataBR(form.travel_start)}</strong>, válido até{' '}
-              <strong>{formatarDataBR(resultado.vigenciaFim)}</strong>.
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{resultado.atualizado ? 'Cadastro atualizado' : 'Cadastro recebido'}</h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-500">
+              {resultado.vinculadoAoPedido
+                ? 'Localizamos o seu pedido. Nossa equipe confere e segue com a ativação.'
+                : 'Nossa equipe vai localizar o seu pedido e seguir com a ativação.'}
             </p>
+          </div>
+          {resultado.vigenciaFim && (
+            <div className="rounded-xl border border-marca-borda bg-marca-claro px-4 py-3 text-sm text-marca-profundo">
+              Ativação em <strong>{formatarDataBR(form.travel_start)}</strong> · válido até{' '}
+              <strong>{formatarDataBR(resultado.vigenciaFim)}</strong>
+            </div>
           )}
-          <p className="text-sm text-slate-600">
-            {resultado.vinculadoAoPedido
-              ? 'Localizamos o seu pedido. Nossa equipe confere e segue com a ativação.'
-              : 'Nossa equipe vai localizar o seu pedido e seguir com a ativação.'}
-          </p>
           <button type="button" onClick={recomecar} className="botao-secundario w-full">
             Cadastrar outro chip
           </button>
@@ -535,15 +594,15 @@ function CartaoPlano({ plano }: { plano: PlanoComprado }) {
     plano.franquia && { rotulo: 'Internet', valor: plano.franquia },
   ].filter(Boolean) as { rotulo: string; valor: string }[];
   return (
-    <div className="rounded-lg border border-slate-200 px-4 py-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Seu plano</p>
-      <p className="mt-0.5 font-medium">{plano.titulo}</p>
+    <div className="bg-gradient-to-br from-marca to-marca-profundo p-5 text-white sm:p-6">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-white/60">Seu plano</p>
+      <p className="mt-1.5 text-[15px] font-medium leading-snug">{plano.titulo}</p>
       {itens.length > 0 && (
-        <dl className="mt-2 grid grid-cols-3 gap-2 text-sm">
+        <dl className="mt-4 grid grid-cols-3 gap-2">
           {itens.map((i) => (
-            <div key={i.rotulo}>
-              <dt className="text-xs text-slate-500">{i.rotulo}</dt>
-              <dd className="font-semibold text-slate-900">{i.valor}</dd>
+            <div key={i.rotulo} className="rounded-xl bg-white/10 px-3 py-2.5 ring-1 ring-inset ring-white/15">
+              <dt className="text-[11px] font-medium uppercase tracking-wide text-white/60">{i.rotulo}</dt>
+              <dd className="mt-0.5 text-sm font-semibold">{i.valor}</dd>
             </div>
           ))}
         </dl>
@@ -560,20 +619,61 @@ function Passos({ etapa }: { etapa: Etapa }) {
   ];
   const atual = itens.findIndex((i) => i.chave === etapa);
   return (
-    <ol className="flex items-center gap-2 text-sm">
+    <ol className="grid grid-cols-3 gap-2">
       {itens.map((item, i) => (
-        <li key={item.chave} className="flex flex-1 items-center gap-2">
-          <span
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-              i <= atual ? 'bg-marca text-white' : 'bg-slate-200 text-slate-500'
-            }`}
-          >
-            {i + 1}
+        <li key={item.chave} className="space-y-2">
+          <span className={`block h-1 rounded-full ${i <= atual ? 'bg-marca' : 'bg-slate-200'}`} />
+          <span className={`block text-xs font-medium ${i === atual ? 'text-marca' : i < atual ? 'text-slate-700' : 'text-slate-400'}`}>
+            {i + 1}. {item.texto}
           </span>
-          <span className={i <= atual ? 'font-medium text-slate-900' : 'text-slate-500'}>{item.texto}</span>
-          {i < itens.length - 1 && <span className="h-px flex-1 bg-slate-200" />}
         </li>
       ))}
     </ol>
+  );
+}
+
+type NomeIcone = 'chip' | 'esim' | 'seta' | 'check' | 'calendario' | 'busca' | 'alerta';
+
+function Icone({ nome, className }: { nome: NomeIcone; className?: string }) {
+  const tracos: Record<NomeIcone, React.ReactNode> = {
+    chip: (
+      <>
+        <path d="M8 3h6.5L19 7.5V19a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+        <rect x="9" y="11" width="7" height="6" rx="1" />
+      </>
+    ),
+    esim: (
+      <>
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <path d="M14 14h3v3M21 14v.01M14 21h7v-4" />
+      </>
+    ),
+    seta: <path d="M5 12h14M13 6l6 6-6 6" />,
+    check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
+    calendario: (
+      <>
+        <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+        <path d="M3.5 10h17M8 3v4M16 3v4" />
+      </>
+    ),
+    busca: (
+      <>
+        <circle cx="11" cy="11" r="6.5" />
+        <path d="m20 20-4-4" />
+      </>
+    ),
+    alerta: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7.5v5M12 16v.01" />
+      </>
+    ),
+  };
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      {tracos[nome]}
+    </svg>
   );
 }
