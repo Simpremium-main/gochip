@@ -37,9 +37,11 @@ Compra não localizada também é aceita: o cliente envia e a equipe faz o vínc
 | `outgoing_webhook_configs` / `outgoing_webhook_logs` | Gatilho opcional `gochip_cadastro` para o Make.com, agora com plano, países e vigência |
 
 Regras:
-- Um cadastro ativo por chip físico (ICCID) e por pedido de eSIM. Reenvio atualiza o cadastro e
-  a submissão; depois que a equipe confere (`conferido`) ou vincula a submissão ao pedido na
-  baixa, fica travado.
+- Um cadastro ativo por chip físico (ICCID) e por pedido de eSIM. **Depois de enviado, o cadastro
+  não pode ser alterado pela tela**: o cliente vê "Cadastro já realizado" e um botão para o
+  WhatsApp do suporte (`WHATSAPP_SUPORTE`), com o chip/pedido já na mensagem. A equipe corrige
+  pela baixa do pedido ou cancelando o cadastro (`status = 'cancelado'`), o que libera um novo
+  envio. Exceção: envio que parou antes de gravar a submissão da baixa pode ser concluído.
 - Os países escolhidos são conferidos no servidor contra a cobertura do plano.
 - A API do ML usa a conta conectada no Pedido Central. O refresh token do ML é de uso único: o
   GoChip grava o par novo antes de usar e, se perder a corrida para o Pedido Central, relê o banco.
@@ -63,8 +65,8 @@ Scripts: `npm test` (validações), `npm run typecheck`, `npm run build`.
 - `POST /api/consulta` `{ chip_type, iccid | order_number, cpf }` →
   `{ tipo, iccid, encontrado, pedidoFinal, plano, preenchimento, jaCadastrado, bloqueado }`
   (`plano` = título, destino, dias, franquia e países; `preenchimento` só com CPF do comprador)
-- `POST /api/cadastro` (JSON) → `{ success, id, atualizado, vinculadoAoPedido, vigenciaFim }`;
-  `422` com `campos` por campo inválido (inclusive país fora do plano), `409` se já conferido.
+- `POST /api/cadastro` (JSON) → `{ success, id, vinculadoAoPedido, vigenciaFim }`;
+  `422` com `campos` por campo inválido (inclusive país fora do plano), `409` se já cadastrado.
 
 ## Stack
 

@@ -5,7 +5,7 @@ import { cadastroSchema, consultaSchema, type Consulta, type TipoChip } from '@/
 import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
 import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista, type PlanoComprado } from '@/lib/plano';
 
-type Etapa = 'chip' | 'formulario' | 'concluido';
+type Etapa = 'chip' | 'formulario' | 'concluido' | 'bloqueado';
 
 interface Formulario {
   full_name: string;
@@ -49,7 +49,21 @@ function lerCampos(issues: { path: (string | number)[]; message: string }[]) {
   return campos;
 }
 
-export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: string; pedidoInicial: string }) {
+/** Link do WhatsApp do suporte com a mensagem já escrita. Sem número configurado, `null`. */
+function linkSuporte(numero: string, texto: string): string | null {
+  const n = soDigitos(numero);
+  return n ? `https://wa.me/${n}?text=${encodeURIComponent(texto)}` : null;
+}
+
+export function CadastroChip({
+  iccidInicial,
+  pedidoInicial,
+  whatsappSuporte,
+}: {
+  iccidInicial: string;
+  pedidoInicial: string;
+  whatsappSuporte: string;
+}) {
   const [etapa, setEtapa] = useState<Etapa>('chip');
   const [tipo, setTipo] = useState<TipoChip>(pedidoInicial && !iccidInicial ? 'virtual' : 'fisico');
   const [iccid, setIccid] = useState(iccidInicial);
@@ -61,7 +75,13 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
   const [erros, setErros] = useState<Record<string, string>>({});
   const [erroGeral, setErroGeral] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
-  const [resultado, setResultado] = useState<{ atualizado: boolean; vinculadoAoPedido: boolean; vigenciaFim: string | null } | null>(null);
+  const [resultado, setResultado] = useState<{ vinculadoAoPedido: boolean; vigenciaFim: string | null } | null>(null);
+
+  const identificacao = tipo === 'fisico' ? `chip ${chaveIccid(iccid)}` : `pedido ${soDigitos(pedido)}`;
+  const suporte = linkSuporte(
+    whatsappSuporte,
+    `Olá! Já fiz o cadastro do ${identificacao} no GoChip e preciso alterar um dado.`,
+  );
 
   const plano = consulta?.plano ?? null;
   const cobertura = plano?.paises ?? [];
@@ -99,7 +119,7 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
       }
       const c = dados as Consulta;
       if (c.bloqueado) {
-        setErroGeral('Este chip já foi cadastrado e conferido pela nossa equipe. Para alterar algum dado, fale com o suporte.');
+        setEtapa('bloqueado');
         return;
       }
       const p = c.preenchimento;
@@ -148,11 +168,15 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
         body: JSON.stringify(corpo),
       });
       const dados = await res.json();
+      if (res.status === 409) {
+        setEtapa('bloqueado');
+        return;
+      }
       if (!res.ok) {
         if (dados.campos) setErros(dados.campos);
         throw new Error(dados.error || 'Falha ao enviar');
       }
-      setResultado({ atualizado: dados.atualizado, vinculadoAoPedido: dados.vinculadoAoPedido, vigenciaFim: dados.vigenciaFim });
+      setResultado({ vinculadoAoPedido: dados.vinculadoAoPedido, vigenciaFim: dados.vigenciaFim });
       setEtapa('concluido');
     } catch (err) {
       setErroGeral((err as Error).message);
@@ -331,7 +355,7 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
             </div>
             {consulta.jaCadastrado && (
               <p className="border-t border-amber-100 bg-amber-50 px-5 py-2.5 text-sm text-amber-800">
-                Já recebemos um cadastro deste chip. Enviar de novo substitui os dados anteriores.
+                O envio anterior deste chip não foi concluído. Confira os dados e envie para concluir.
               </p>
             )}
           </div>
@@ -565,7 +589,7 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
             <Icone nome="check" className="h-7 w-7 text-marca" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{resultado.atualizado ? 'Cadastro atualizado' : 'Cadastro recebido'}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Cadastro recebido</h1>
             <p className="mt-2 text-sm leading-relaxed text-slate-500">
               {resultado.vinculadoAoPedido
                 ? 'Localizamos o seu pedido. Nossa equipe confere e segue com a ativação.'
@@ -578,12 +602,66 @@ export function CadastroChip({ iccidInicial, pedidoInicial }: { iccidInicial: st
               <strong>{formatarDataBR(resultado.vigenciaFim)}</strong>
             </div>
           )}
-          <button type="button" onClick={recomecar} className="botao-secundario w-full">
-            Cadastrar outro chip
-          </button>
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">Os dados enviados não podem mais ser alterados por aqui.</p>
+            <BotaoSuporte link={suporte} texto="Precisa corrigir algo? Fale com o suporte" />
+            <button type="button" onClick={recomecar} className="botao-secundario w-full">
+              Cadastrar outro chip
+            </button>
+          </div>
+        </div>
+      )}
+
+      {etapa === 'bloqueado' && (
+        <div className="cartao space-y-5 p-7 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-marca-claro ring-8 ring-marca-claro/50">
+            <Icone nome="cadeado" className="h-7 w-7 text-marca" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Cadastro já realizado</h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-500">
+              Já recebemos os dados {tipo === 'fisico' ? 'deste chip' : 'deste pedido'}. Por segurança, eles não podem
+              ser alterados por aqui. Para corrigir alguma informação, fale com o nosso suporte.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" destaque />
+            <button type="button" onClick={recomecar} className="botao-secundario w-full">
+              Cadastrar outro chip
+            </button>
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function BotaoSuporte({ link, texto, destaque = false }: { link: string | null; texto: string; destaque?: boolean }) {
+  if (!link) {
+    return <p className="text-sm text-slate-500">Fale com o suporte da SimPremium pelo WhatsApp.</p>;
+  }
+  return (
+    <a
+      href={link}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={
+        destaque
+          ? 'inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 text-[15px] font-semibold text-white shadow-sm shadow-[#25D366]/30 transition hover:bg-[#1ebe5a]'
+          : 'inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#25D366]/40 bg-white px-4 text-[15px] font-medium text-[#128C7E] transition hover:bg-[#25D366]/5'
+      }
+    >
+      <IconeWhatsApp className="h-5 w-5" />
+      {texto}
+    </a>
+  );
+}
+
+function IconeWhatsApp({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.21h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Zm0 18.15h-.01a8.23 8.23 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.25-8.24 2.2 0 4.27.86 5.83 2.42a8.18 8.18 0 0 1 2.41 5.83c0 4.54-3.7 8.23-8.24 8.23Zm4.52-6.16c-.25-.12-1.47-.72-1.7-.8-.23-.09-.39-.13-.56.12-.16.25-.64.8-.78.97-.14.16-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.42.08-.16.04-.31-.02-.43-.06-.13-.56-1.35-.76-1.84-.2-.48-.41-.42-.56-.43h-.48a.92.92 0 0 0-.66.31c-.23.25-.87.85-.87 2.07 0 1.22.89 2.4 1.01 2.56.12.17 1.75 2.67 4.24 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.67-1.18.21-.58.21-1.07.15-1.18-.06-.1-.22-.16-.47-.28Z" />
+    </svg>
   );
 }
 
@@ -617,7 +695,7 @@ function Passos({ etapa }: { etapa: Etapa }) {
     { chave: 'formulario', texto: 'Dados' },
     { chave: 'concluido', texto: 'Pronto' },
   ];
-  const atual = itens.findIndex((i) => i.chave === etapa);
+  const atual = etapa === 'bloqueado' ? itens.length - 1 : itens.findIndex((i) => i.chave === etapa);
   return (
     <ol className="grid grid-cols-3 gap-2">
       {itens.map((item, i) => (
@@ -632,7 +710,7 @@ function Passos({ etapa }: { etapa: Etapa }) {
   );
 }
 
-type NomeIcone = 'chip' | 'esim' | 'seta' | 'check' | 'calendario' | 'busca' | 'alerta';
+type NomeIcone = 'chip' | 'esim' | 'seta' | 'check' | 'calendario' | 'busca' | 'alerta' | 'cadeado';
 
 function Icone({ nome, className }: { nome: NomeIcone; className?: string }) {
   const tracos: Record<NomeIcone, React.ReactNode> = {
@@ -651,6 +729,12 @@ function Icone({ nome, className }: { nome: NomeIcone; className?: string }) {
       </>
     ),
     seta: <path d="M5 12h14M13 6l6 6-6 6" />,
+    cadeado: (
+      <>
+        <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" />
+        <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+      </>
+    ),
     check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
     calendario: (
       <>

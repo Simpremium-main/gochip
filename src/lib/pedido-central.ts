@@ -262,24 +262,19 @@ async function cadastroAtivo(dados: { chip_type: 'fisico' | 'virtual'; iccid?: s
 }
 
 /**
- * A submissão da baixa: se a equipe já vinculou ao pedido em /mercado-livre/baixa-pedido,
- * os dados já foram levados ao pedido e o cadastro fica travado, como no `conferido`.
+ * Cadastro enviado não se altera pela tela: qualquer correção passa pelo suporte.
+ *
+ * A única exceção é o envio que parou no meio — o cadastro foi gravado, mas a submissão da
+ * baixa não (falha de rede, banco fora). Sem a submissão a equipe nem vê o cadastro, então
+ * o cliente pode concluir o envio. Conferido pela equipe fica travado sempre.
  */
-async function situacaoDaSubmissao(id: number | null | undefined) {
-  if (!id) return null;
-  const { data } = await supabaseServer.from(SUBMISSOES).select('id, linked_ml_order_id, cancelled').eq('id', id).maybeSingle();
-  return (data as any) ?? null;
-}
-
-async function estaBloqueado(existente: any): Promise<boolean> {
+function estaBloqueado(existente: any): boolean {
   if (!existente) return false;
-  if (existente.status === 'conferido') return true;
-  const sub = await situacaoDaSubmissao(existente.ml_submission_id);
-  return !!sub?.linked_ml_order_id && !sub.cancelled;
+  return existente.status === 'conferido' || !!existente.ml_submission_id;
 }
 
 const MSG_BLOQUEADO =
-  'Este chip já foi cadastrado e conferido pela nossa equipe. Para alterar algum dado, fale com o suporte.';
+  'Este chip já foi cadastrado e os dados não podem mais ser alterados por aqui. Para corrigir algo, fale com o suporte.';
 
 function telefoneParaTela(v: string | null | undefined): string {
   const d = soDigitos(v);
@@ -294,6 +289,7 @@ function dentroDoPlano(escolhidos: string[], plano: PlanoComprado | null): strin
 }
 
 function preenchimento(cpf: string, existente: any, pedido: PedidoML | null, plano: PlanoComprado | null): Preenchimento | null {
+  // Envio que parou no meio: devolve o que o próprio cliente digitou, para ele concluir.
   if (existente && existente.cpf === cpf) {
     return {
       full_name: existente.full_name || '',
@@ -322,7 +318,7 @@ function preenchimento(cpf: string, existente: any, pedido: PedidoML | null, pla
 export async function consultar(dados: ConsultaDados): Promise<Consulta> {
   const pedido = dados.chip_type === 'fisico' ? await buscarPorIccid(dados.iccid!) : await buscarPorNumero(dados.order_number!);
   const [plano, existente] = await Promise.all([pedido ? planoDoPedido(pedido) : null, cadastroAtivo(dados, pedido)]);
-  const bloqueado = await estaBloqueado(existente);
+  const bloqueado = estaBloqueado(existente);
 
   return {
     tipo: dados.chip_type,
@@ -338,7 +334,6 @@ export async function consultar(dados: ConsultaDados): Promise<Consulta> {
 
 export interface ResultadoCadastro {
   id: string;
-  atualizado: boolean;
   vinculadoAoPedido: boolean;
   vigenciaFim: string | null;
 }
@@ -346,8 +341,8 @@ export interface ResultadoCadastro {
 /**
  * Passo 2: grava o cadastro.
  *
- * Reenvio do mesmo chip/pedido enquanto a equipe não conferiu atualiza a linha e a
- * submissão (o cliente corrigindo um dado); depois de conferido, fica travado.
+ * Cadastro já enviado não é alterado (ver `estaBloqueado`); o reenvio só completa um
+ * envio que parou antes de gravar a submissão da baixa.
  */
 export async function registrarCadastro(
   dados: Cadastro,
@@ -357,7 +352,7 @@ export async function registrarCadastro(
   const pedido = fisico ? await buscarPorIccid(dados.iccid!) : await buscarPorNumero(dados.order_number!);
   const [plano, existente] = await Promise.all([pedido ? planoDoPedido(pedido) : null, cadastroAtivo(dados, pedido)]);
 
-  if (await estaBloqueado(existente)) throw new CadastroBloqueadoError(MSG_BLOQUEADO);
+  if (estaBloqueado(existente)) throw new CadastroBloqueadoError(MSG_BLOQUEADO);
 
   // O navegador só oferece os países do plano, mas quem decide é o servidor.
   const paises = plano?.paises.length ? dentroDoPlano(dados.countries, plano) : dados.countries;
@@ -407,23 +402,23 @@ export async function registrarCadastro(
     if (error) {
       // 23505 = índice único: outro envio do mesmo chip/pedido chegou junto com este.
       if ((error as any).code === '23505') {
-        throw new CadastroBloqueadoError('Este chip acabou de ser cadastrado. Atualize a página e tente novamente.');
+        throw new CadastroBloqueadoError(MSG_BLOQUEADO);
       }
       throw new Error(`Falha ao gravar cadastro: ${error.message}`);
     }
     id = data.id;
   }
 
-  const submissao = await gravarSubmissao(existente?.ml_submission_id ?? null, linha, pedido, plano, iccidKey);
-  if (submissao !== existente?.ml_submission_id) {
-    const { error } = await supabaseServer.from(TABELA).update({ ml_submission_id: submissao }).eq('id', id);
-    if (error) console.error('[gochip] submissão não vinculada ao cadastro:', error.message);
-  }
+  // A submissão é gravada por último e é ela que trava o cadastro: se falhar aqui, o
+  // cliente pode reenviar e concluir.
+  const submissao = await gravarSubmissao(linha, pedido, plano, iccidKey);
+  const { error: erroVinculo } = await supabaseServer.from(TABELA).update({ ml_submission_id: submissao }).eq('id', id);
+  if (erroVinculo) console.error('[gochip] submissão não vinculada ao cadastro:', erroVinculo.message);
 
   const tipoTexto = fisico ? 'chip físico' : 'eSIM';
   if (pedido) {
     await registrarNoCrm(pedido, [
-      `[GoChip] ${existente ? 'Cadastro do titular atualizado' : 'Cadastro do titular recebido'} pelo cliente`,
+      '[GoChip] Cadastro do titular recebido pelo cliente',
       iccidKey ? `${tipoTexto} ICCID ${iccidKey}` : tipoTexto,
       `Titular: ${linha.full_name} (CPF ${mascararCpf(linha.cpf)})`,
       `Contato: ${linha.email} / +${linha.phone}`,
@@ -432,7 +427,7 @@ export async function registrarCadastro(
   }
 
   await dispararGatilho({
-    evento: existente ? 'cadastro_atualizado' : 'cadastro_recebido',
+    evento: 'cadastro_recebido',
     cadastro_id: id,
     iccid: iccidKey,
     tipo_chip: linha.chip_type,
@@ -450,7 +445,7 @@ export async function registrarCadastro(
     fim_uso: vigenciaFim,
   });
 
-  return { id, atualizado: !!existente, vinculadoAoPedido: !!pedido, vigenciaFim };
+  return { id, vinculadoAoPedido: !!pedido, vigenciaFim };
 }
 
 /**
@@ -460,7 +455,6 @@ export async function registrarCadastro(
  * tabela mestre.
  */
 async function gravarSubmissao(
-  idAtual: number | null,
   linha: Record<string, any>,
   pedido: PedidoML | null,
   plano: PlanoComprado | null,
@@ -488,12 +482,6 @@ async function gravarSubmissao(
     observation: [resumo, linha.observation].filter(Boolean).join('\n'),
   };
 
-  const atual = await situacaoDaSubmissao(idAtual);
-  if (atual && !atual.cancelled && !atual.linked_ml_order_id) {
-    const { error } = await supabaseServer.from(SUBMISSOES).update(row).eq('id', atual.id);
-    if (error) throw new Error(`Falha ao atualizar a submissão: ${error.message}`);
-    return atual.id;
-  }
   const { data, error } = await supabaseServer
     .from(SUBMISSOES)
     .insert({ ...row, submission_date: new Date().toISOString() })
