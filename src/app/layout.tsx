@@ -6,7 +6,7 @@ const fonte = Inter({ subsets: ['latin'], variable: '--fonte', display: 'swap' }
 
 export const metadata: Metadata = {
   title: 'GoChip — Ativação do chip',
-  description: 'Comprou seu chip SimPremium no Mercado Livre? Cadastre os dados para a ativação.',
+  description: 'Comprou seu chip no Mercado Livre? Cadastre os dados para a ativação.',
 };
 
 export const viewport: Viewport = {
@@ -30,13 +30,13 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </span>
             <div className="leading-tight">
               <p className="text-[15px] font-semibold tracking-tight">GoChip</p>
-              <p className="text-xs text-slate-500">Ativação SimPremium</p>
+              <p className="text-xs text-slate-500">Ativação do seu chip</p>
             </div>
           </div>
         </header>
         <main className="mx-auto max-w-xl px-4 pb-10 pt-6 sm:pt-10">{children}</main>
         <footer className="mx-auto max-w-xl px-4 pb-8 text-center text-xs text-slate-400">
-          SimPremium · Seus dados são usados apenas para a ativação, conforme a LGPD.
+          GoChip · Seus dados são usados apenas para a ativação, conforme a LGPD.
         </footer>
       </body>
     </html>

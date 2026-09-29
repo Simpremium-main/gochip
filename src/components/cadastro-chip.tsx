@@ -572,7 +572,7 @@ export function CadastroChip({
                 checked={form.lgpd}
                 onChange={(e) => alterar('lgpd', e.target.checked)}
               />
-              <span>Autorizo a SimPremium a usar estes dados para ativar e dar suporte à linha, conforme a LGPD.</span>
+              <span>Autorizo o uso destes dados para ativar e dar suporte à linha, conforme a LGPD.</span>
             </label>
             <Erro campo="lgpd" />
 
@@ -638,7 +638,7 @@ export function CadastroChip({
 
 function BotaoSuporte({ link, texto, destaque = false }: { link: string | null; texto: string; destaque?: boolean }) {
   if (!link) {
-    return <p className="text-sm text-slate-500">Fale com o suporte da SimPremium pelo WhatsApp.</p>;
+    return <p className="text-sm text-slate-500">Fale com o nosso suporte pelo WhatsApp.</p>;
   }
   return (
     <a

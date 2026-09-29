@@ -1,6 +1,6 @@
 # GoChip
 
-Cadastro do titular pelo próprio cliente quando o chip SimPremium chega — **chip físico ou eSIM**.
+Cadastro do titular pelo próprio cliente quando o chip chega — **chip físico ou eSIM**.
 Os dados vão direto para o banco do **Pedido Central** (mesmo projeto Supabase).
 
 ## Fluxo
