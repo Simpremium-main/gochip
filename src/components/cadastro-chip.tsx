@@ -5,7 +5,7 @@ import {
   cadastroSchema, chaveDoCampo, pedidosSchema,
   type ChipConsulta, type Consulta, type ListaPedidos, type PedidoPendente, type ResumoCadastro, type TipoChip,
 } from '@/lib/cadastro-schema';
-import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
+import { formatarCpf, soDigitos } from '@/lib/documentos';
 import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista } from '@/lib/plano';
 
 type Etapa = 'cpf' | 'pedidos' | 'formulario' | 'concluido' | 'bloqueado';
@@ -31,8 +31,6 @@ interface Formulario {
   comum: Ativacao;
   /** Uma por chip, na ordem de `consulta.chips`. */
   chips: Ativacao[];
-  /** ICCID digitado de cada chip físico que a equipe ainda não lançou no pedido. */
-  iccids: string[];
 }
 
 const ATIVACAO_VAZIA: Ativacao = { travel_start: '', countries: [], countries_texto: '' };
@@ -48,8 +46,10 @@ const VAZIO: Formulario = {
   mesmos: true,
   comum: ATIVACAO_VAZIA,
   chips: [],
-  iccids: [],
 };
+
+/** ICCID em grupos de 4, para conferir com o cartão ou o e-mail. */
+const formatarIccid = (iccid: string) => iccid.replace(/(.{4})(?=.)/g, '$1 ');
 
 const LISTA_VAZIA: ListaPedidos = { cpfEncontrado: false, pedidos: [], recentes: [] };
 
@@ -159,11 +159,6 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
     for (const campo of Object.keys(parte)) limparErros(campo === 'countries_texto' ? 'countries' : campo, i);
   }
 
-  function alterarIccid(i: number, valor: string) {
-    setForm((f) => ({ ...f, iccids: f.iccids.map((v, j) => (j === i ? valor : v)) }));
-    limparErros('iccid', i);
-  }
-
   /** Marca/desmarca "mesmos dados": os dados de um lado passam para o outro. */
   function alternarMesmos(mesmos: boolean) {
     setForm((f) =>
@@ -250,7 +245,6 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
         mesmos: iguais,
         comum: { ...base, countries: naCobertura(base?.countries ?? [], coberturaComum(c.chips)) },
         chips: porChip,
-        iccids: c.chips.map(() => ''),
       });
       setErros({});
       setEtapa('formulario');
@@ -264,7 +258,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErroGeral(null);
-    const { comum: ativacaoComum, chips: porChip, iccids, mesmos: _, ...resto } = form;
+    const { comum: ativacaoComum, chips: porChip, mesmos: _, ...resto } = form;
     const corpo = {
       ...resto,
       pedido_id: escolhido?.pedido_id,
@@ -275,7 +269,6 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
         return {
           item_id: chip.item_id,
           posicao: chip.posicao,
-          iccid: chip.tipo === 'fisico' && !chip.iccid ? chaveIccid(iccids[i]) || undefined : undefined,
           travel_start: a.travel_start,
           countries: cobertura.length ? a.countries : paisesDaLista(a.countries_texto),
         };
@@ -284,9 +277,6 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
 
     const local = cadastroSchema.safeParse(corpo);
     const campos = local.success ? {} : lerCampos(local.error.issues);
-    chips.forEach((chip, i) => {
-      if (chip.tipo === 'fisico' && !chip.iccid && !iccids[i].trim()) campos[`chips.${i}.iccid`] = 'Informe o número do chip (ICCID)';
-    });
     if (Object.keys(campos).length) {
       setErros(campos);
       setErroGeral('Confira os campos destacados.');
@@ -347,7 +337,6 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
 
   /** A ativação que vale para o chip `i` na tela. */
   const ativacaoDo = (i: number) => (usaComum ? form.comum : form.chips[i] ?? ATIVACAO_VAZIA);
-  const pedemIccid = chips.map((c, i) => ({ chip: c, i })).filter(({ chip }) => chip.tipo === 'fisico' && !chip.iccid);
 
   const classeCampo = (campo: string) => `campo ${erros[campo] ? 'campo-erro' : ''}`;
   const Erro = ({ campo }: { campo: string }) => <ErroTexto texto={erros[campo]} />;
@@ -570,31 +559,30 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
                 </div>
               </section>
 
-              {pedemIccid.length > 0 && (
-                <section className="space-y-7">
-                  <div>
-                    <h2 className="titulo">{pedemIccid.length > 1 ? 'Números dos chips' : 'Número do chip'}</h2>
-                    <p className="subtitulo">O ICCID vem impresso no cartão do chip, abaixo do código de barras.</p>
+              <section className="space-y-7">
+                <div>
+                  <h2 className="titulo">{varios ? 'Números dos chips' : 'Número do chip'}</h2>
+                  <p className="subtitulo">Conforme o nosso sistema. Não é preciso digitar.</p>
+                </div>
+                {chips.map((chip, i) => (
+                  <div key={i} className="grupo">
+                    <span className="rotulo">
+                      {varios ? `ICCID · ${nomeDoChip(chip, i, chips.length)}` : 'Número do chip (ICCID)'}
+                    </span>
+                    <p
+                      aria-readonly="true"
+                      className={`campo flex items-center bg-slate-50 ${chip.iccid ? 'font-mono tracking-wider text-slate-700' : 'text-sm text-slate-400'}`}
+                    >
+                      {chip.iccid ? formatarIccid(chip.iccid) : 'Será informado pela nossa equipe'}
+                    </p>
+                    <p className="ajuda">
+                      {chip.tipo === 'fisico'
+                        ? 'Impresso no cartão do chip, abaixo do código de barras.'
+                        : 'É o número que virá abaixo do QR code no e-mail do seu eSIM.'}
+                    </p>
                   </div>
-                  {pedemIccid.map(({ chip, i }) => (
-                    <div key={i} className="grupo">
-                      <label htmlFor={`iccid-${i}`} className="rotulo">
-                        {varios ? `ICCID do ${nomeDoChip(chip, i, chips.length).toLowerCase()}` : 'Número do chip (ICCID)'}
-                      </label>
-                      <input
-                        id={`iccid-${i}`}
-                        inputMode="numeric"
-                        autoComplete="off"
-                        placeholder="8955 0000 0000 0000 000"
-                        className={`${classeCampo(`chips.${i}.iccid`)} font-mono tracking-wider`}
-                        value={form.iccids[i] ?? ''}
-                        onChange={(e) => alterarIccid(i, e.target.value)}
-                      />
-                      <Erro campo={`chips.${i}.iccid`} />
-                    </div>
-                  ))}
-                </section>
-              )}
+                ))}
+              </section>
 
               <section className="space-y-7">
                 <div>
@@ -698,7 +686,6 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
                             ? [nomeDoChip(chip, i, chips.length), chip.plano?.dias && `${chip.plano.dias} dias`, chip.plano?.franquia].filter(Boolean).join(' · ')
                             : chip.plano?.titulo || escolhido?.titulo}
                         </p>
-                        {chip.iccid && <p className="mt-0.5 font-mono text-[11px] text-slate-400">{chip.iccid}</p>}
                         {varios && fim && (
                           <p className="mt-1 text-xs font-light text-marca">
                             {formatarDataBR(a.travel_start)} até {formatarDataBR(fim)}

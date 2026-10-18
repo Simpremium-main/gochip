@@ -25,9 +25,11 @@ Só pedidos do **Mercado Livre**.
    que o plano cobre. Com mais de um chip, a caixa **"Usar a mesma data de ativação e os mesmos
    destinos para os N chips"** vem marcada: uma data e uma escolha de países valem para todos (só os
    países que todos os planos cobrem). Desmarcada, cada chip tem a sua. Os dados do comprador já vêm
-   preenchidos. No chip físico, o ICCID vem da
-   `order_activations_master` (`source = 'mercado-livre'`); se a equipe ainda não lançou, o
-   cliente digita o número impresso no cartão.
+   preenchidos. O **número do chip (ICCID) é só leitura**: a tela mostra o que está na
+   `order_activations_master` (`source = 'mercado-livre'`), e o cliente não altera. No chip físico a
+   ajuda diz que é o número impresso no cartão, abaixo do código de barras; no eSIM, que é o número
+   que virá abaixo do QR code no e-mail. Se a equipe ainda não lançou, aparece "Será informado pela
+   nossa equipe" e o cadastro segue sem ICCID.
 5. **Pronto**: cada chip é gravado no Pedido Central (uma linha e uma submissão da baixa por chip)
    e entra na baixa do pedido.
 
@@ -39,13 +41,13 @@ suporte. "CPF não encontrado" só aparece quando o CPF não tem nenhum pedido n
 
 | Onde | O quê |
 |---|---|
-| `chip_registrations` | Uma linha por chip (físico pelo ICCID; eSIM por pedido + item + posição `unit_position`): pedido, titular, plano (título, destino, dias, franquia), países, início e fim da vigência, consentimento LGPD |
+| `chip_registrations` | Uma linha por chip (pelo ICCID do sistema; sem ICCID, por pedido + item + posição `unit_position`): pedido, titular, plano (título, destino, dias, franquia), países, início e fim da vigência, consentimento LGPD |
 | `mercado_livre_form_submissions` | A mesma submissão que o formulário do site gerava. **Substitui o formulário**: a equipe faz a baixa em `/mercado-livre/baixa-pedido` como sempre. Plano, ICCID e CPF do titular vão na observação |
 | `order_crm_logs` | Linha `[GoChip]` no histórico do pedido (CPF mascarado) |
 | `outgoing_webhook_configs` / `outgoing_webhook_logs` | Gatilho opcional `gochip_cadastro` para o Make.com, agora com plano, países e vigência |
 
 Regras:
-- Um cadastro ativo por chip físico (ICCID) e por chip de eSIM (pedido + item + posição). **Depois de enviado, o cadastro
+- Um cadastro ativo por chip: pelo ICCID quando ele já está no sistema; sem ICCID, por pedido + item + posição. **Depois de enviado, o cadastro
   não pode ser alterado pela tela**: o cliente vê "Cadastro já realizado" e um botão para o
   WhatsApp do suporte (`WHATSAPP_SUPORTE`), com o chip/pedido já na mensagem. A equipe corrige
   pela baixa do pedido ou cancelando o cadastro (`status = 'cancelado'`), o que libera um novo
@@ -61,7 +63,7 @@ Regras:
 
 1. Aplique, nesta ordem, `sql/2026-09-28_gochip_chip_registrations.sql`,
    `sql/2026-09-29_gochip_mercado_livre_plano.sql`, `sql/2026-10-18_gochip_ativacao_por_cpf.sql` e
-   `sql/2026-10-18_gochip_varios_chips.sql` no SQL Editor do Supabase do Pedido Central
+   `sql/2026-10-18_gochip_varios_chips.sql` e `sql/2026-10-18_gochip_varios_chips_iccid.sql` no SQL Editor do Supabase do Pedido Central
    (convenção do Pedido Central: DDL não é executado pelo app).
 2. Copie `.env.example` para `.env.local` e preencha `NEXT_PUBLIC_SUPABASE_URL` e
    `SUPABASE_SERVICE_ROLE_KEY` (os mesmos do Pedido Central).
@@ -76,7 +78,7 @@ Scripts: `npm test` (validações), `npm run typecheck`, `npm run build`.
 - `POST /api/consulta` `{ cpf, pedido_id }` →
   `{ pedidoFinal, chips: [{ item_id, posicao, tipo, iccid, plano, travel_start, countries, jaCadastrado }], jaEnviados, preenchimento, bloqueado, resumo }`;
   `404` se o pedido não é do CPF ou já tem data de ativação
-- `POST /api/cadastro` `{ cpf, pedido_id, chips: [{ item_id, posicao, iccid?, travel_start, countries }], ...titular }` →
+- `POST /api/cadastro` `{ cpf, pedido_id, chips: [{ item_id, posicao, travel_start, countries }], ...titular }` →
   `{ success, ids, vinculadoAoPedido, chips: [{ tipo, travel_start, vigenciaFim }] }`; o envio traz todos os
   chips pendentes do pedido. `422` com `campos` por campo inválido (`chips.1.countries` = países do 2º chip),
   `409` se já cadastrado, `404` se os chips do pedido mudaram.

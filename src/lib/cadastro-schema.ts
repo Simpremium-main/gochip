@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { cpfValido, iccidValido, normalizarTelefone, soDigitos } from '@/lib/documentos';
+import { cpfValido, normalizarTelefone, soDigitos } from '@/lib/documentos';
 import type { PlanoComprado } from '@/lib/plano';
 
 const dataIso = z
@@ -9,8 +9,6 @@ const dataIso = z
 
 const opcional = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), schema.optional());
-
-export const MSG_ICCID = 'ICCID inválido. Confira o número impresso no cartão do chip (18 a 22 dígitos, começa com 89).';
 
 const cpf = z.string().refine(cpfValido, 'CPF inválido').transform(soDigitos);
 
@@ -31,8 +29,6 @@ export const consultaSchema = z.object({ cpf, pedido_id: pedidoId });
 export const chipSchema = z.object({
   item_id: itemId,
   posicao: z.number().int().min(1).max(50),
-  /** Chip físico cujo ICCID ainda não foi lançado no pedido: o cliente digita. */
-  iccid: opcional(z.string().trim().refine(iccidValido, MSG_ICCID)),
   travel_start: z.string().min(1, 'Informe a data de ativação').pipe(dataIso),
   countries: z
     .array(z.string().trim().min(1).max(80))
@@ -153,7 +149,7 @@ export interface ChipConsulta {
   item_id: number | null;
   posicao: number;
   tipo: TipoChip;
-  /** ICCID do chip físico já lançado no pedido. Nulo no físico = o cliente digita. */
+  /** ICCID que está no sistema (só leitura na tela). Nulo = a equipe ainda não lançou. */
   iccid: string | null;
   plano: PlanoComprado | null;
   /** Data e países já conhecidos deste chip (envio que parou no meio ou o próprio pedido). */

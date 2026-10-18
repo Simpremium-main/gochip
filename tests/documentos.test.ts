@@ -38,7 +38,7 @@ describe('telefone', () => {
 });
 
 describe('cadastroSchema', () => {
-  const chip = { item_id: 678, posicao: 1, iccid: '', travel_start: '2026-10-10', countries: ['Estados Unidos'] };
+  const chip = { item_id: 678, posicao: 1, travel_start: '2026-10-10', countries: ['Estados Unidos'] };
   const valido = {
     pedido_id: '12345',
     chips: [chip],
@@ -59,7 +59,6 @@ describe('cadastroSchema', () => {
     expect(r.cpf).toBe('52998224725');
     expect(r.phone).toBe('5511912345678');
     expect(r.email).toBe('maria@exemplo.com');
-    expect(r.chips[0].iccid).toBeUndefined();
     expect(r.chips[0].item_id).toBe(678);
     expect(r.chips[0].countries).toEqual(['Estados Unidos']);
   });
@@ -86,9 +85,9 @@ describe('cadastroSchema', () => {
     expect(cadastroSchema.parse({ ...valido, chips: [{ ...chip, item_id: null }] }).chips[0].item_id).toBeNull();
   });
 
-  it('ICCID digitado precisa ser válido', () => {
-    expect(cadastroSchema.safeParse({ ...valido, chips: [{ ...chip, iccid: '8955 0123 4567 8901 234' }] }).success).toBe(true);
-    expect(campos(cadastroSchema.safeParse({ ...valido, chips: [{ ...chip, iccid: '1234' }] }))).toEqual(['chips.0.iccid']);
+  it('ICCID não vem do navegador: o que chegar é descartado', () => {
+    const r = cadastroSchema.parse({ ...valido, chips: [{ ...chip, iccid: '8955 0123 4567 8901 234' }] });
+    expect(r.chips[0]).not.toHaveProperty('iccid');
   });
 
   it('exige consentimento, nome completo e CPF válido', () => {

@@ -6,7 +6,6 @@ import {
   chaveTexto, fimDaVigencia, formatarFranquia, lerTitulo, paisesDaLista, tipoDoTitulo, type PlanoComprado,
 } from '@/lib/plano';
 import {
-  MSG_ICCID,
   type Cadastro, type Consulta, type ConsultaDados, type ListaPedidos, type PedidoEnviado, type PedidoPendente, type PedidosDados,
   type TipoChip,
 } from '@/lib/cadastro-schema';
@@ -17,7 +16,7 @@ import {
  * Lê:
  *   - `mercado_livre_orders` / `mercado_livre_order_items`: os pedidos do CPF do comprador,
  *     o título e a data de ativação já lançada (`checkin`);
- *   - `order_activations_master` (source = 'mercado-livre'): o ICCID do chip físico do pedido;
+ *   - `order_activations_master` (source = 'mercado-livre'): o ICCID de cada chip do pedido;
  *   - `system_settings.tabela_preco_ml_anuncios`: o vínculo anúncio (MLB) → plano, com a
  *     cobertura, feito na Tabela de Preço → Mercado Livre;
  *   - `price_table_countries` / `price_table_country_aliases`: países padronizados, para
@@ -60,7 +59,7 @@ export interface ChipML {
   unit_index: number | null;
   titulo: string;
   tipo: TipoChip;
-  /** ICCID do chip físico lançado na mestre; nulo se ainda não lançado. */
+  /** ICCID lançado na mestre pela equipe (chip físico ou eSIM); nulo se ainda não lançado. */
   iccid: string | null;
   /** Dados da ativação já lançados no item (de um formulário anterior ou da equipe). */
   checkin: string | null;
@@ -166,7 +165,7 @@ async function cadastrosDosPedidos(ids: string[]): Promise<any[]> {
 
 /**
  * O cadastro de um chip: o do mesmo item e posição (cadastro antigo, sem posição, é o
- * do 1º chip) ou, no físico, o do mesmo ICCID.
+ * do 1º chip) ou o do mesmo ICCID.
  */
 function cadastroDoChip(cadastros: any[], pedidoId: string, chip: ChipML) {
   return (
@@ -533,7 +532,7 @@ export async function consultar(dados: ConsultaDados): Promise<Consulta> {
         item_id: chip.item_id,
         posicao: chip.posicao,
         tipo: chip.tipo,
-        iccid: chip.tipo === 'fisico' ? chip.iccid : null,
+        iccid: chip.iccid,
         plano,
         travel_start: meu?.travel_start || '',
         countries: doPedido.length ? doPedido : plano?.paises.length === 1 ? plano.paises : [],
@@ -600,27 +599,12 @@ export async function registrarCadastro(
   const erros: Record<string, string> = {};
   const preparados = enviados.map(({ dados: c, situacao }, i) => {
     const { chip, plano, cadastro } = situacao!;
-    // Chip físico: vale o ICCID lançado no pedido; sem ele, o que o cliente digitou.
-    const iccidKey = chip.tipo === 'fisico' ? chip.iccid ?? (c.iccid ? chaveIccid(c.iccid) : null) : null;
-    if (chip.tipo === 'fisico' && !iccidKey) erros[`chips.${i}.iccid`] = MSG_ICCID;
+    // O ICCID é só o que está no sistema (lançado pela equipe); o site não altera.
+    const iccidKey = chip.iccid;
     // O navegador só oferece os países do plano, mas quem decide é o servidor.
     const paises = plano?.paises.length ? dentroDoPlano(c.countries, plano) : c.countries;
     if (paises.length !== c.countries.length) erros[`chips.${i}.countries`] = 'Selecione apenas países incluídos no plano';
     return { c, chip, plano, cadastro, iccidKey, paises };
-  });
-
-  const iccids = preparados.map((p) => p.iccidKey).filter((k): k is string => !!k);
-  preparados.forEach((p, i) => {
-    if (p.iccidKey && iccids.indexOf(p.iccidKey) !== iccids.lastIndexOf(p.iccidKey)) {
-      erros[`chips.${i}.iccid`] = 'Este ICCID foi informado em mais de um chip';
-    }
-  });
-  const proprios = new Set(preparados.map((p) => p.cadastro?.id).filter(Boolean));
-  const ocupados = (await cadastrosDosIccids(iccids)).filter((c) => !proprios.has(c.id));
-  preparados.forEach((p, i) => {
-    if (p.iccidKey && ocupados.some((c) => c.iccid_key === p.iccidKey)) {
-      erros[`chips.${i}.iccid`] = 'Este chip já foi cadastrado. Confira o número ou fale com o suporte.';
-    }
   });
   if (Object.keys(erros).length) throw new CampoInvalidoError(erros);
 
