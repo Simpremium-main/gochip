@@ -1,18 +1,21 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { cadastroSchema, consultaSchema, type Consulta, type ResumoCadastro, type TipoChip } from '@/lib/cadastro-schema';
+import {
+  cadastroSchema, pedidosSchema, type Consulta, type PedidoPendente, type ResumoCadastro, type TipoChip,
+} from '@/lib/cadastro-schema';
 import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
 import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista, type PlanoComprado } from '@/lib/plano';
 
-type Etapa = 'chip' | 'formulario' | 'concluido' | 'bloqueado';
+type Etapa = 'cpf' | 'pedidos' | 'formulario' | 'concluido' | 'bloqueado';
 
 interface Formulario {
   full_name: string;
   birth_date: string;
   email: string;
   phone: string;
-  order_number: string;
+  /** Chip físico sem ICCID lançado no pedido: o cliente digita. */
+  iccid: string;
   travel_start: string;
   countries: string[];
   /** Países digitados à mão, quando a cobertura do plano não é conhecida. */
@@ -27,7 +30,7 @@ const VAZIO: Formulario = {
   birth_date: '',
   email: '',
   phone: '',
-  order_number: '',
+  iccid: '',
   travel_start: '',
   countries: [],
   countries_texto: '',
@@ -55,36 +58,31 @@ function linkSuporte(numero: string, texto: string): string | null {
   return n ? `https://wa.me/${n}?text=${encodeURIComponent(texto)}` : null;
 }
 
-export function CadastroChip({
-  iccidInicial,
-  pedidoInicial,
-  whatsappSuporte,
-}: {
-  iccidInicial: string;
-  pedidoInicial: string;
-  whatsappSuporte: string;
-}) {
-  const [etapa, setEtapa] = useState<Etapa>('chip');
-  const [tipo, setTipo] = useState<TipoChip>(pedidoInicial && !iccidInicial ? 'virtual' : 'fisico');
-  const [iccid, setIccid] = useState(iccidInicial);
-  const [pedido, setPedido] = useState(pedidoInicial);
+export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
+  const [etapa, setEtapa] = useState<Etapa>('cpf');
   const [cpf, setCpf] = useState('');
+  const [pedidos, setPedidos] = useState<PedidoPendente[]>([]);
+  const [escolhido, setEscolhido] = useState<PedidoPendente | null>(null);
   const [consulta, setConsulta] = useState<Consulta | null>(null);
   const [form, setForm] = useState<Formulario>(VAZIO);
   const [filtroPais, setFiltroPais] = useState('');
   const [erros, setErros] = useState<Record<string, string>>({});
   const [erroGeral, setErroGeral] = useState<string | null>(null);
-  const [carregando, setCarregando] = useState(false);
+  const [carregando, setCarregando] = useState<string | null>(null);
   const [resultado, setResultado] = useState<{ vinculadoAoPedido: boolean; vigenciaFim: string | null } | null>(null);
 
-  const identificacao = tipo === 'fisico' ? `chip ${chaveIccid(iccid)}` : `pedido ${soDigitos(pedido)}`;
+  const tipo: TipoChip = consulta?.tipo ?? escolhido?.tipo ?? 'fisico';
   const suporte = linkSuporte(
     whatsappSuporte,
-    `Olá! Já fiz o cadastro do ${identificacao} no GoChip e preciso alterar um dado.`,
+    escolhido
+      ? `Olá! Já fiz o cadastro do pedido final ${escolhido.pedidoFinal} no GoChip e preciso alterar um dado.`
+      : 'Olá! Não encontrei o meu pedido para ativar no GoChip.',
   );
 
   const plano = consulta?.plano ?? null;
   const cobertura = plano?.paises ?? [];
+  /** Chip físico cujo ICCID a equipe ainda não lançou no pedido. */
+  const pedeIccid = tipo === 'fisico' && !!consulta && !consulta.iccid;
 
   const alterar = <K extends keyof Formulario>(campo: K, valor: Formulario[K]) => {
     setForm((f) => ({ ...f, [campo]: valor }));
@@ -96,40 +94,58 @@ export function CadastroChip({
     alterar('countries', form.countries.includes(pais) ? form.countries.filter((p) => p !== pais) : [...form.countries, pais]);
   }
 
-  async function consultar(e: React.FormEvent) {
+  async function postar(url: string, corpo: unknown) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(corpo),
+    });
+    return { res, dados: await res.json() };
+  }
+
+  async function listarPedidos(e: React.FormEvent) {
     e.preventDefault();
     setErroGeral(null);
-    const corpo = { chip_type: tipo, iccid: tipo === 'fisico' ? chaveIccid(iccid) : undefined, order_number: tipo === 'virtual' ? pedido : undefined, cpf };
-    const local = consultaSchema.safeParse(corpo);
+    const local = pedidosSchema.safeParse({ cpf });
     if (!local.success) {
       setErros(lerCampos(local.error.issues));
       return;
     }
-    setCarregando(true);
+    setCarregando('cpf');
     try {
-      const res = await fetch('/api/consulta', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(corpo),
-      });
-      const dados = await res.json();
+      const { res, dados } = await postar('/api/pedidos', { cpf });
       if (!res.ok) {
         if (dados.campos) setErros(dados.campos);
         throw new Error(dados.error || 'Falha na consulta');
       }
+      setPedidos(dados.pedidos as PedidoPendente[]);
+      setErros({});
+      setEtapa('pedidos');
+    } catch (err) {
+      setErroGeral((err as Error).message);
+    } finally {
+      setCarregando(null);
+    }
+  }
+
+  async function escolherPedido(p: PedidoPendente) {
+    setErroGeral(null);
+    setEscolhido(p);
+    setCarregando(`${p.pedido_id}:${p.item_id ?? ''}`);
+    try {
+      const { res, dados } = await postar('/api/consulta', { cpf, pedido_id: p.pedido_id, item_id: p.item_id });
+      if (!res.ok) throw new Error(dados.error || 'Falha na consulta');
       const c = dados as Consulta;
+      setConsulta(c);
       if (c.bloqueado) {
-        setConsulta(c);
         setEtapa('bloqueado');
         return;
       }
-      const p = c.preenchimento;
-      setConsulta(c);
+      const pre = c.preenchimento;
       setForm({
         ...VAZIO,
-        ...(p ? { full_name: p.full_name, email: p.email, phone: p.phone, birth_date: p.birth_date, travel_start: p.travel_start } : {}),
-        countries: p?.countries.length ? p.countries : c.plano?.paises.length === 1 ? c.plano.paises : [],
-        order_number: tipo === 'virtual' ? soDigitos(pedido) : '',
+        ...(pre ? { full_name: pre.full_name, email: pre.email, phone: pre.phone, birth_date: pre.birth_date, travel_start: pre.travel_start } : {}),
+        countries: pre?.countries.length ? pre.countries : c.plano?.paises.length === 1 ? c.plano.paises : [],
       });
       setFiltroPais('');
       setErros({});
@@ -137,22 +153,27 @@ export function CadastroChip({
     } catch (err) {
       setErroGeral((err as Error).message);
     } finally {
-      setCarregando(false);
+      setCarregando(null);
     }
   }
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErroGeral(null);
-    const { countries_texto, countries, order_number, ...resto } = form;
+    const { countries_texto, countries, iccid, ...resto } = form;
     const corpo = {
       ...resto,
-      chip_type: tipo,
-      iccid: tipo === 'fisico' ? chaveIccid(iccid) : undefined,
-      order_number: order_number || undefined,
+      pedido_id: escolhido?.pedido_id,
+      item_id: escolhido?.item_id ?? null,
+      iccid: pedeIccid ? chaveIccid(iccid) : undefined,
       cpf,
       countries: cobertura.length ? countries : paisesDaLista(countries_texto),
     };
+    if (pedeIccid && !iccid.trim()) {
+      setErros({ iccid: 'Informe o número do chip (ICCID)' });
+      setErroGeral('Confira os campos destacados.');
+      return;
+    }
 
     const local = cadastroSchema.safeParse(corpo);
     if (!local.success) {
@@ -161,14 +182,9 @@ export function CadastroChip({
       return;
     }
 
-    setCarregando(true);
+    setCarregando('enviar');
     try {
-      const res = await fetch('/api/cadastro', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(corpo),
-      });
-      const dados = await res.json();
+      const { res, dados } = await postar('/api/cadastro', corpo);
       if (res.status === 409) {
         setEtapa('bloqueado');
         return;
@@ -182,14 +198,35 @@ export function CadastroChip({
     } catch (err) {
       setErroGeral((err as Error).message);
     } finally {
-      setCarregando(false);
+      setCarregando(null);
     }
   }
 
+  /** Volta para a lista de pedidos do mesmo CPF, já atualizada. */
+  async function voltarParaPedidos() {
+    setConsulta(null);
+    setEscolhido(null);
+    setForm(VAZIO);
+    setErros({});
+    setErroGeral(null);
+    setResultado(null);
+    setCarregando('cpf');
+    try {
+      const { res, dados } = await postar('/api/pedidos', { cpf });
+      if (res.ok) setPedidos(dados.pedidos as PedidoPendente[]);
+    } catch {
+      // Sem rede: mostra a lista que já estava na tela.
+    } finally {
+      setCarregando(null);
+    }
+    setEtapa('pedidos');
+  }
+
   function recomecar() {
-    setEtapa('chip');
-    setIccid('');
-    setPedido('');
+    setEtapa('cpf');
+    setCpf('');
+    setPedidos([]);
+    setEscolhido(null);
     setConsulta(null);
     setForm(VAZIO);
     setErros({});
@@ -218,101 +255,21 @@ export function CadastroChip({
         </div>
       )}
 
-      {etapa === 'chip' && (
-        <form onSubmit={consultar} noValidate className="cartao space-y-6 p-5 sm:p-7">
+      {etapa === 'cpf' && (
+        <form onSubmit={listarPedidos} noValidate className="cartao space-y-6 p-5 sm:p-7">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Ative seu chip</h1>
             <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
-              Vamos localizar a sua compra no Mercado Livre e o plano que você comprou.
+              Informe o CPF da sua conta no Mercado Livre para ver as compras que ainda precisam ser ativadas.
             </p>
           </div>
-
-          <fieldset>
-            <legend className="rotulo">Qual chip você comprou?</legend>
-            <div className="grid grid-cols-2 gap-3">
-              {(['fisico', 'virtual'] as TipoChip[]).map((t) => {
-                const ativo = tipo === t;
-                return (
-                  <label
-                    key={t}
-                    className={`relative flex cursor-pointer flex-col gap-2 rounded-xl border p-3.5 transition ${
-                      ativo
-                        ? 'border-marca bg-marca-claro ring-4 ring-marca/10'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="tipo"
-                      className="sr-only"
-                      checked={ativo}
-                      onChange={() => {
-                        setTipo(t);
-                        setErros({});
-                      }}
-                    />
-                    <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                        ativo ? 'bg-marca text-white' : 'bg-slate-100 text-slate-500'
-                      }`}
-                    >
-                      <Icone nome={t === 'fisico' ? 'chip' : 'esim'} className="h-5 w-5" />
-                    </span>
-                    <span className={`text-sm font-semibold ${ativo ? 'text-marca-profundo' : 'text-slate-800'}`}>
-                      {t === 'fisico' ? 'Chip físico' : 'eSIM'}
-                    </span>
-                    <span className="text-xs leading-snug text-slate-500">
-                      {t === 'fisico' ? 'Cartão enviado pelo correio' : 'Chip virtual, ativado por QR code'}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
-
-          {tipo === 'fisico' ? (
-            <div>
-              <label htmlFor="iccid" className="rotulo">Número do chip (ICCID)</label>
-              <input
-                id="iccid"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="8955 0000 0000 0000 000"
-                className={`${classeCampo('iccid')} font-mono tracking-wider`}
-                value={iccid}
-                onChange={(e) => {
-                  setIccid(e.target.value);
-                  setErros(({ iccid: _, ...r }) => r);
-                }}
-              />
-              <p className="ajuda">Impresso no cartão do chip, abaixo do código de barras.</p>
-              <Erro campo="iccid" />
-            </div>
-          ) : (
-            <div>
-              <label htmlFor="order_number" className="rotulo">Número do pedido no Mercado Livre</label>
-              <input
-                id="order_number"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="2000 0000 0000 0000"
-                className={`${classeCampo('order_number')} font-mono tracking-wider`}
-                value={pedido}
-                onChange={(e) => {
-                  setPedido(e.target.value);
-                  setErros(({ order_number: _, ...r }) => r);
-                }}
-              />
-              <p className="ajuda">No app do Mercado Livre: Minhas compras → detalhe da compra.</p>
-              <Erro campo="order_number" />
-            </div>
-          )}
 
           <div>
             <label htmlFor="cpf" className="rotulo">CPF da conta no Mercado Livre</label>
             <input
               id="cpf"
               inputMode="numeric"
+              autoComplete="off"
               placeholder="000.000.000-00"
               className={classeCampo('cpf')}
               value={cpf}
@@ -324,10 +281,71 @@ export function CadastroChip({
             <Erro campo="cpf" />
           </div>
 
-          <button type="submit" className="botao" disabled={carregando}>
+          <button type="submit" className="botao" disabled={!!carregando}>
             {carregando ? 'Consultando…' : <>Continuar <Icone nome="seta" className="h-4 w-4" /></>}
           </button>
         </form>
+      )}
+
+      {etapa === 'pedidos' && (
+        <div className="cartao space-y-5 p-5 sm:p-7">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Escolha o pedido</h1>
+            <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
+              Compras do CPF <strong className="text-slate-700">{cpf}</strong> que ainda não têm data de ativação.
+            </p>
+          </div>
+
+          {pedidos.length > 0 ? (
+            <ul className="space-y-3">
+              {pedidos.map((p) => {
+                const chave = `${p.pedido_id}:${p.item_id ?? ''}`;
+                const detalhes = [p.destino, p.dias && `${p.dias} dias`, p.franquia].filter(Boolean).join(' · ');
+                return (
+                  <li key={chave}>
+                    <button
+                      type="button"
+                      onClick={() => escolherPedido(p)}
+                      disabled={!!carregando}
+                      className="flex w-full items-center gap-3.5 rounded-xl border border-slate-200 bg-white p-3.5 text-left transition hover:border-marca hover:bg-marca-claro disabled:opacity-60"
+                    >
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-marca-claro text-marca">
+                        <Icone nome={p.tipo === 'fisico' ? 'chip' : 'esim'} className="h-5 w-5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-slate-900">
+                          {TIPO_TEXTO[p.tipo]} · pedido final {p.pedidoFinal}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-slate-500">{detalhes || p.titulo}</span>
+                        <span className="mt-0.5 block text-xs text-slate-400">
+                          {p.compradoEm && <>Compra em {formatarDataBR(p.compradoEm)}</>}
+                          {p.envioIncompleto && <span className="text-amber-700"> · envio não concluído</span>}
+                        </span>
+                      </span>
+                      {carregando === chave ? (
+                        <span className="text-xs text-slate-500">Abrindo…</span>
+                      ) : (
+                        <Icone nome="seta" className="h-4 w-4 shrink-0 text-slate-400" />
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm leading-relaxed text-slate-600">
+              <p>
+                Não encontramos compras pendentes de ativação neste CPF. Confira se é o CPF da conta do Mercado Livre que
+                fez a compra ou fale com o suporte.
+              </p>
+              <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" />
+            </div>
+          )}
+
+          <button type="button" onClick={recomecar} className="botao-secundario w-full" disabled={!!carregando}>
+            Usar outro CPF
+          </button>
+        </div>
       )}
 
       {etapa === 'formulario' && consulta && (
@@ -338,10 +356,7 @@ export function CadastroChip({
             ) : (
               <div className="p-5">
                 <p className="secao">Sua compra</p>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">
-                  Ainda não localizamos {tipo === 'fisico' ? 'este chip' : 'este pedido'} no Mercado Livre. Tudo bem:
-                  envie o cadastro e nossa equipe faz o vínculo.
-                </p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">{escolhido?.titulo}</p>
               </div>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-sm">
@@ -350,13 +365,13 @@ export function CadastroChip({
                 {consulta.iccid && <span className="ml-1.5 font-mono text-xs text-slate-500">{consulta.iccid}</span>}
                 {consulta.pedidoFinal && <> · pedido final <strong className="text-slate-800">{consulta.pedidoFinal}</strong></>}
               </span>
-              <button type="button" onClick={recomecar} className="text-sm font-medium text-marca hover:text-marca-escuro">
-                Trocar
+              <button type="button" onClick={voltarParaPedidos} className="text-sm font-medium text-marca hover:text-marca-escuro">
+                Trocar pedido
               </button>
             </div>
             {consulta.jaCadastrado && (
               <p className="border-t border-amber-100 bg-amber-50 px-5 py-2.5 text-sm text-amber-800">
-                O envio anterior deste chip não foi concluído. Confira os dados e envie para concluir.
+                O envio anterior deste pedido não foi concluído. Confira os dados e envie para concluir.
               </p>
             )}
           </div>
@@ -369,17 +384,20 @@ export function CadastroChip({
               )}
             </div>
 
-            {!consulta.encontrado && tipo === 'fisico' && (
+            {pedeIccid && (
               <div>
-                <label htmlFor="order_number_informado" className="rotulo">Número do pedido no Mercado Livre (se souber)</label>
+                <label htmlFor="iccid" className="rotulo">Número do chip (ICCID)</label>
                 <input
-                  id="order_number_informado"
+                  id="iccid"
                   inputMode="numeric"
-                  className={classeCampo('order_number')}
-                  value={form.order_number}
-                  onChange={(e) => alterar('order_number', e.target.value)}
+                  autoComplete="off"
+                  placeholder="8955 0000 0000 0000 000"
+                  className={`${classeCampo('iccid')} font-mono tracking-wider`}
+                  value={form.iccid}
+                  onChange={(e) => alterar('iccid', e.target.value)}
                 />
-                <Erro campo="order_number" />
+                <p className="ajuda">Impresso no cartão do chip, abaixo do código de barras.</p>
+                <Erro campo="iccid" />
               </div>
             )}
 
@@ -577,7 +595,7 @@ export function CadastroChip({
             </label>
             <Erro campo="lgpd" />
 
-            <button type="submit" className="botao" disabled={carregando}>
+            <button type="submit" className="botao" disabled={!!carregando}>
               {carregando ? 'Enviando…' : 'Enviar cadastro'}
             </button>
           </div>
@@ -606,8 +624,8 @@ export function CadastroChip({
           <div className="space-y-3">
             <p className="text-xs text-slate-500">Os dados enviados não podem mais ser alterados por aqui.</p>
             <BotaoSuporte link={suporte} texto="Precisa corrigir algo? Fale com o suporte" />
-            <button type="button" onClick={recomecar} className="botao-secundario w-full">
-              Cadastrar outro chip
+            <button type="button" onClick={voltarParaPedidos} className="botao-secundario w-full">
+              Ativar outro pedido
             </button>
           </div>
         </div>
@@ -621,15 +639,15 @@ export function CadastroChip({
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Cadastro já realizado</h1>
             <p className="mt-2 text-sm leading-relaxed text-slate-500">
-              Já recebemos os dados {tipo === 'fisico' ? 'deste chip' : 'deste pedido'}. Por segurança, eles não podem
+              Já recebemos os dados deste pedido. Por segurança, eles não podem
               ser alterados por aqui. Para corrigir alguma informação, fale com o nosso suporte.
             </p>
           </div>
           {consulta?.resumo && <ResumoDoCadastro resumo={consulta.resumo} />}
           <div className="space-y-3">
             <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" destaque />
-            <button type="button" onClick={recomecar} className="botao-secundario w-full">
-              Cadastrar outro chip
+            <button type="button" onClick={voltarParaPedidos} className="botao-secundario w-full">
+              Ativar outro pedido
             </button>
           </div>
         </div>
@@ -721,13 +739,14 @@ function CartaoPlano({ plano }: { plano: PlanoComprado }) {
 
 function Passos({ etapa }: { etapa: Etapa }) {
   const itens: { chave: Etapa; texto: string }[] = [
-    { chave: 'chip', texto: 'Cadastro' },
+    { chave: 'cpf', texto: 'Cadastro' },
+    { chave: 'pedidos', texto: 'Pedido' },
     { chave: 'formulario', texto: 'Dados' },
     { chave: 'concluido', texto: 'Pronto' },
   ];
   const atual = etapa === 'bloqueado' ? itens.length - 1 : itens.findIndex((i) => i.chave === etapa);
   return (
-    <ol className="grid grid-cols-3 gap-2">
+    <ol className="grid grid-cols-4 gap-2">
       {itens.map((item, i) => (
         <li key={item.chave} className="space-y-2">
           <span className={`block h-1 rounded-full ${i <= atual ? 'bg-marca' : 'bg-slate-200'}`} />

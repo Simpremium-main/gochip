@@ -1,18 +1,23 @@
 import 'server-only';
 import { supabaseServer } from '@/lib/supabase-server';
-import { chaveIccid, formatarCpf, mascararCpf, soDigitos } from '@/lib/documentos';
+import { chaveIccid, formatarCpf, iccidValido, mascararCpf, soDigitos } from '@/lib/documentos';
 import { itensDoPedidoML, type ItemVendido } from '@/lib/mercado-livre';
 import {
-  chaveTexto, fimDaVigencia, formatarFranquia, lerTitulo, paisesDaLista, type PlanoComprado,
+  chaveTexto, fimDaVigencia, formatarFranquia, lerTitulo, paisesDaLista, tipoDoTitulo, type PlanoComprado,
 } from '@/lib/plano';
-import type { Cadastro, Consulta, ConsultaDados, Preenchimento } from '@/lib/cadastro-schema';
+import {
+  MSG_ICCID,
+  type Cadastro, type Consulta, type ConsultaDados, type ListaPedidos, type PedidoPendente, type PedidosDados,
+  type Preenchimento, type TipoChip,
+} from '@/lib/cadastro-schema';
 
 /**
  * Integração com o banco do Pedido Central — só pedidos do MERCADO LIVRE.
  *
  * Lê:
- *   - `order_activations_master` (source = 'mercado-livre'): o ICCID do chip físico → pedido;
- *   - `mercado_livre_orders` / `mercado_livre_order_items`: o pedido, o comprador e o título;
+ *   - `mercado_livre_orders` / `mercado_livre_order_items`: os pedidos do CPF do comprador,
+ *     o título e a data de ativação já lançada (`checkin`);
+ *   - `order_activations_master` (source = 'mercado-livre'): o ICCID do chip físico do pedido;
  *   - `system_settings.tabela_preco_ml_anuncios`: o vínculo anúncio (MLB) → plano, com a
  *     cobertura, feito na Tabela de Preço → Mercado Livre;
  *   - `price_table_countries` / `price_table_country_aliases`: países padronizados, para
@@ -32,6 +37,9 @@ const SETTING_ANUNCIOS_ML = 'tabela_preco_ml_anuncios';
 
 export class CadastroBloqueadoError extends Error {}
 
+/** Pedido que não é do CPF, não existe mais ou já tem data de ativação. */
+export class PedidoIndisponivelError extends Error {}
+
 /** Campo que passou no formato mas não bate com o pedido (ex.: país fora do plano). */
 export class CampoInvalidoError extends Error {
   constructor(public campos: Record<string, string>) {
@@ -49,8 +57,11 @@ export interface PedidoML {
   /** Número do pedido no Mercado Livre. */
   numero: string;
   titulo: string;
+  tipo: TipoChip;
   item_id: number | null;
   unit_index: number | null;
+  /** ICCID do chip físico lançado na mestre para este pedido; nulo se ainda não lançado. */
+  iccid: string | null;
   customer_name: string | null;
   customer_cpf: string | null;
   customer_email: string | null;
@@ -60,28 +71,130 @@ export interface PedidoML {
   destino: string | null;
 }
 
-async function carregarPedido(filtro: { id?: string; numero?: string }, unidade?: { item_id: number | null; unit_index: number | null }): Promise<PedidoML | null> {
-  let q = supabaseServer
+const COLUNAS_PEDIDO = 'id, order_id, plan_name, customer_name, customer_cpf, customer_email, customer_phone, confirmation_status, created_at';
+
+/** O CPF pode estar gravado no pedido só com dígitos ou formatado. */
+const grafiasCpf = (cpf: string) => [...new Set([cpf, formatarCpf(cpf)])];
+
+/** Itens do pedido (um por anúncio vendido). */
+async function itensDosPedidos(ids: string[]): Promise<any[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabaseServer
+    .from('mercado_livre_order_items')
+    .select('id, order_id, checkin, destino')
+    .in('order_id', ids)
+    .order('id');
+  if (error) throw new Error(`Pedido Central indisponível: ${error.message}`);
+  return (data || []) as any[];
+}
+
+/** Cadastros ativos do GoChip para estes pedidos. */
+async function cadastrosDosPedidos(ids: string[]): Promise<any[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabaseServer
+    .from(TABELA)
+    .select('id, order_id, item_id, status, ml_submission_id, cpf, created_at')
+    .in('order_id', ids)
+    .neq('status', 'cancelado')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`Falha ao consultar cadastros: ${error.message}`);
+  return (data || []) as any[];
+}
+
+/** O cadastro de um item: o do próprio item, ou um do pedido gravado sem item. */
+function cadastroDoItem(cadastros: any[], pedidoId: string, itemId: number | null) {
+  return (
+    cadastros.find((c) => String(c.order_id) === pedidoId && (itemId == null || c.item_id == null || Number(c.item_id) === itemId)) ??
+    null
+  );
+}
+
+/**
+ * Passo 1: os pedidos do Mercado Livre deste CPF que ainda não têm data de ativação —
+ * nem no item do pedido (`checkin`), nem num cadastro do GoChip já enviado.
+ */
+export async function pedidosPendentes(dados: PedidosDados): Promise<ListaPedidos> {
+  const { data, error } = await supabaseServer
     .from('mercado_livre_orders')
-    .select('id, order_id, plan_name, customer_name, customer_cpf, customer_email, customer_phone, confirmation_status, created_at')
-    .neq('confirmation_status', 'rejected');
-  q = filtro.id ? q.eq('id', filtro.id) : q.eq('order_id', filtro.numero!);
-  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+    .select(COLUNAS_PEDIDO)
+    .in('customer_cpf', grafiasCpf(dados.cpf))
+    .neq('confirmation_status', 'rejected')
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw new Error(`Pedido Central indisponível: ${error.message}`);
+  const pedidos = (data || []) as any[];
+  const ids = pedidos.map((p) => String(p.id));
+  const [itens, cadastros] = await Promise.all([itensDosPedidos(ids), cadastrosDosPedidos(ids)]);
+
+  const lista: PedidoPendente[] = [];
+  for (const p of pedidos) {
+    const id = String(p.id);
+    const doPedido = itens.filter((i) => String(i.order_id) === id);
+    // Pedido sem item lançado ainda conta como uma compra a ativar.
+    const unidades = doPedido.length ? doPedido : [{ id: null, checkin: null }];
+    for (const item of unidades) {
+      if (item.checkin) continue;
+      const itemId = item.id == null ? null : Number(item.id);
+      const cadastro = cadastroDoItem(cadastros, id, itemId);
+      if (estaBloqueado(cadastro)) continue;
+      const lido = lerTitulo(String(p.plan_name || ''));
+      lista.push({
+        pedido_id: id,
+        item_id: itemId,
+        pedidoFinal: String(p.order_id).slice(-4),
+        titulo: lido.titulo,
+        tipo: tipoDoTitulo(lido.titulo),
+        compradoEm: p.created_at ? String(p.created_at).slice(0, 10) : null,
+        destino: lido.destino,
+        dias: lido.dias,
+        franquia: lido.franquia,
+        envioIncompleto: !!cadastro,
+      });
+    }
+  }
+  return { pedidos: lista };
+}
+
+/**
+ * O pedido escolhido na lista, conferindo de novo que ele é do CPF informado: o navegador
+ * só manda a referência, e quem decide de quem é o pedido é o servidor.
+ */
+export async function pedidoDoCpf(cpf: string, pedidoId: string, itemId: number | null): Promise<PedidoML | null> {
+  const { data, error } = await supabaseServer
+    .from('mercado_livre_orders')
+    .select(COLUNAS_PEDIDO)
+    .eq('id', pedidoId)
+    .neq('confirmation_status', 'rejected')
+    .limit(1);
   if (error) throw new Error(`Pedido Central indisponível: ${error.message}`);
   const p = (data || [])[0] as any;
-  if (!p) return null;
+  if (!p || soDigitos(p.customer_cpf) !== cpf) return null;
 
-  let itemQ = supabaseServer.from('mercado_livre_order_items').select('id, checkin, destino').eq('order_id', p.id);
-  if (unidade?.item_id != null) itemQ = itemQ.eq('id', unidade.item_id);
-  const { data: itens } = await itemQ.order('id').limit(1);
-  const item = (itens || [])[0] as any;
+  const itens = await itensDosPedidos([String(p.id)]);
+  const item = itemId == null ? null : itens.find((i) => Number(i.id) === itemId);
+  if (itemId != null && !item) return null;
 
+  // ICCID do chip físico, se a equipe já lançou na mestre. O mesmo pedido pode ter mais de
+  // uma linha; vale a do item escolhido e, entre elas, a mais recente.
+  let mestre = supabaseServer
+    .from('order_activations_master')
+    .select('iccid, item_id, unit_index, date_created')
+    .eq('source', ORIGEM)
+    .eq('order_id', p.id);
+  if (itemId != null) mestre = mestre.eq('item_id', itemId);
+  const { data: linhas, error: erroMestre } = await mestre.order('date_created', { ascending: false }).limit(1);
+  if (erroMestre) throw new Error(`Pedido Central indisponível: ${erroMestre.message}`);
+  const ativacao = (linhas || [])[0] as any;
+
+  const titulo = String(p.plan_name || '');
   return {
     id: String(p.id),
     numero: String(p.order_id),
-    titulo: String(p.plan_name || ''),
-    item_id: unidade?.item_id ?? item?.id ?? null,
-    unit_index: unidade?.unit_index ?? null,
+    titulo,
+    tipo: tipoDoTitulo(titulo),
+    item_id: itemId,
+    unit_index: ativacao?.unit_index ?? null,
+    iccid: ativacao?.iccid && iccidValido(ativacao.iccid) ? chaveIccid(ativacao.iccid) : null,
     customer_name: p.customer_name ?? null,
     customer_cpf: p.customer_cpf ?? null,
     customer_email: p.customer_email ?? null,
@@ -89,33 +202,6 @@ async function carregarPedido(filtro: { id?: string; numero?: string }, unidade?
     checkin: item?.checkin ? String(item.checkin).slice(0, 10) : null,
     destino: item?.destino ?? null,
   };
-}
-
-/**
- * Chip físico: o ICCID na tabela mestre, só entre pedidos do Mercado Livre. O mesmo ICCID
- * pode ter sido vendido mais de uma vez; vale o registro mais recente.
- */
-export async function buscarPorIccid(iccid: string): Promise<PedidoML | null> {
-  const chave = chaveIccid(iccid);
-  if (!chave) return null;
-  const variantes = [...new Set([iccid.trim(), chave, chave.toLowerCase()])];
-  const { data, error } = await supabaseServer
-    .from('order_activations_master')
-    .select('order_id, item_id, unit_index, date_created')
-    .eq('source', ORIGEM)
-    .in('iccid', variantes);
-  if (error) throw new Error(`Pedido Central indisponível: ${error.message}`);
-  const linhas = (data || []) as any[];
-  if (linhas.length === 0) return null;
-  const u = linhas.reduce((a, b) => (String(b.date_created || '') > String(a.date_created || '') ? b : a));
-  if (u.order_id == null) return null;
-  return carregarPedido({ id: String(u.order_id) }, { item_id: u.item_id ?? null, unit_index: u.unit_index ?? null });
-}
-
-/** eSIM: o número do pedido que o cliente vê no Mercado Livre. */
-export async function buscarPorNumero(numero: string): Promise<PedidoML | null> {
-  const n = soDigitos(numero);
-  return n ? carregarPedido({ numero: n }) : null;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -245,20 +331,28 @@ export async function planoDoPedido(pedido: PedidoML): Promise<PlanoComprado | n
 // Cadastro
 // ---------------------------------------------------------------------------------------
 
-/** Cadastro ativo deste chip (físico, pelo ICCID) ou deste pedido (eSIM, pelo número). */
-async function cadastroAtivo(dados: { chip_type: 'fisico' | 'virtual'; iccid?: string; order_number?: string }, pedido: PedidoML | null) {
-  let q = supabaseServer.from(TABELA).select('*').neq('status', 'cancelado');
-  if (dados.chip_type === 'fisico') {
-    q = q.eq('iccid_key', chaveIccid(dados.iccid));
-  } else {
-    const numero = soDigitos(pedido?.numero ?? dados.order_number);
-    if (!numero) return null;
-    q = q.eq('chip_type', 'virtual').is('iccid_key', null)
-      .or(`order_number.eq.${numero},order_number_informed.eq.${numero}`);
-  }
-  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+/**
+ * Cadastro ativo deste pedido (item) ou, no chip físico, deste ICCID — o ICCID é único
+ * entre os cadastros ativos.
+ */
+async function cadastroAtivo(pedido: PedidoML, iccidKey: string | null) {
+  const doPedido = cadastroDoItem(await cadastrosDosPedidos([pedido.id]), pedido.id, pedido.item_id);
+  if (doPedido || !iccidKey) return doPedido ? await cadastroPorId(doPedido.id) : null;
+  const { data, error } = await supabaseServer
+    .from(TABELA)
+    .select('*')
+    .neq('status', 'cancelado')
+    .eq('iccid_key', iccidKey)
+    .order('created_at', { ascending: false })
+    .limit(1);
   if (error) throw new Error(`Falha ao consultar cadastros: ${error.message}`);
   return ((data || [])[0] as any) ?? null;
+}
+
+async function cadastroPorId(id: string) {
+  const { data, error } = await supabaseServer.from(TABELA).select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(`Falha ao consultar cadastros: ${error.message}`);
+  return data as any;
 }
 
 /**
@@ -276,6 +370,9 @@ function estaBloqueado(existente: any): boolean {
 const MSG_BLOQUEADO =
   'Este chip já foi cadastrado e os dados não podem mais ser alterados por aqui. Para corrigir algo, fale com o suporte.';
 
+const MSG_NAO_ENCONTRADO = 'Não encontramos este pedido no seu CPF. Volte e escolha um pedido da lista.';
+const MSG_JA_ATIVADO = 'Este pedido já tem data de ativação. Para alterar, fale com o suporte.';
+
 function telefoneParaTela(v: string | null | undefined): string {
   const d = soDigitos(v);
   return d ? `+${d.length === 10 || d.length === 11 ? `55${d}` : d}` : '';
@@ -288,7 +385,7 @@ function dentroDoPlano(escolhidos: string[], plano: PlanoComprado | null): strin
   return [...new Set(escolhidos.map((p) => porChave.get(chaveTexto(p))).filter((p): p is string => !!p))];
 }
 
-function preenchimento(cpf: string, existente: any, pedido: PedidoML | null, plano: PlanoComprado | null): Preenchimento | null {
+function preenchimento(cpf: string, existente: any, pedido: PedidoML, plano: PlanoComprado | null): Preenchimento {
   // Envio que parou no meio: devolve o que o próprio cliente digitou, para ele concluir.
   if (existente && existente.cpf === cpf) {
     return {
@@ -300,49 +397,44 @@ function preenchimento(cpf: string, existente: any, pedido: PedidoML | null, pla
       countries: dentroDoPlano(paisesDaLista(existente.countries), plano),
     };
   }
-  if (pedido && soDigitos(pedido.customer_cpf) === cpf) {
-    const doPedido = dentroDoPlano(paisesDaLista(pedido.destino), plano);
-    return {
-      full_name: pedido.customer_name || '',
-      email: pedido.customer_email || '',
-      phone: telefoneParaTela(pedido.customer_phone),
-      birth_date: '',
-      travel_start: pedido.checkin || '',
-      countries: doPedido.length ? doPedido : plano?.paises.length === 1 ? plano.paises : [],
-    };
-  }
-  return null;
+  const doPedido = dentroDoPlano(paisesDaLista(pedido.destino), plano);
+  return {
+    full_name: pedido.customer_name || '',
+    email: pedido.customer_email || '',
+    phone: telefoneParaTela(pedido.customer_phone),
+    birth_date: '',
+    travel_start: '',
+    countries: doPedido.length ? doPedido : plano?.paises.length === 1 ? plano.paises : [],
+  };
 }
 
-/** Passo 1 da tela: localizar a compra e o plano. */
+/** Passo 2 da tela: o pedido escolhido e o plano comprado. */
 export async function consultar(dados: ConsultaDados): Promise<Consulta> {
-  const pedido = dados.chip_type === 'fisico' ? await buscarPorIccid(dados.iccid!) : await buscarPorNumero(dados.order_number!);
-  const [plano, existente] = await Promise.all([pedido ? planoDoPedido(pedido) : null, cadastroAtivo(dados, pedido)]);
+  const pedido = await pedidoDoCpf(dados.cpf, dados.pedido_id, dados.item_id);
+  if (!pedido) throw new PedidoIndisponivelError(MSG_NAO_ENCONTRADO);
+  const [plano, existente] = await Promise.all([planoDoPedido(pedido), cadastroAtivo(pedido, pedido.iccid)]);
   const bloqueado = estaBloqueado(existente);
-  const donoDoCadastro =
-    !!existente && (existente.cpf === dados.cpf || (!!pedido && soDigitos(pedido.customer_cpf) === dados.cpf));
+  if (!bloqueado && pedido.checkin) throw new PedidoIndisponivelError(MSG_JA_ATIVADO);
 
   return {
-    tipo: dados.chip_type,
-    iccid: dados.chip_type === 'fisico' ? chaveIccid(dados.iccid) : null,
-    encontrado: !!pedido,
-    pedidoFinal: pedido ? pedido.numero.slice(-4) : null,
+    tipo: pedido.tipo,
+    iccid: pedido.tipo === 'fisico' ? pedido.iccid : null,
+    pedidoFinal: pedido.numero.slice(-4),
     plano,
     preenchimento: bloqueado ? null : preenchimento(dados.cpf, existente, pedido, plano),
     jaCadastrado: !!existente,
     bloqueado,
-    resumo:
-      bloqueado && donoDoCadastro
-        ? {
-            plano: existente.plan_title ?? plano?.titulo ?? null,
-            destino: existente.plan_destination ?? plano?.destino ?? null,
-            dias: existente.plan_days ?? plano?.dias ?? null,
-            franquia: existente.plan_data ?? plano?.franquia ?? null,
-            paises: paisesDaLista(existente.countries),
-            ativacao: existente.travel_start ?? null,
-            fim: existente.travel_end ?? fimDaVigencia(existente.travel_start, existente.plan_days ?? plano?.dias),
-          }
-        : null,
+    resumo: bloqueado
+      ? {
+          plano: existente.plan_title ?? plano?.titulo ?? null,
+          destino: existente.plan_destination ?? plano?.destino ?? null,
+          dias: existente.plan_days ?? plano?.dias ?? null,
+          franquia: existente.plan_data ?? plano?.franquia ?? null,
+          paises: paisesDaLista(existente.countries),
+          ativacao: existente.travel_start ?? null,
+          fim: existente.travel_end ?? fimDaVigencia(existente.travel_start, existente.plan_days ?? plano?.dias),
+        }
+      : null,
   };
 }
 
@@ -353,7 +445,7 @@ export interface ResultadoCadastro {
 }
 
 /**
- * Passo 2: grava o cadastro.
+ * Passo 3: grava o cadastro.
  *
  * Cadastro já enviado não é alterado (ver `estaBloqueado`); o reenvio só completa um
  * envio que parou antes de gravar a submissão da baixa.
@@ -362,11 +454,18 @@ export async function registrarCadastro(
   dados: Cadastro,
   meta: { ip: string | null; userAgent: string | null },
 ): Promise<ResultadoCadastro> {
-  const fisico = dados.chip_type === 'fisico';
-  const pedido = fisico ? await buscarPorIccid(dados.iccid!) : await buscarPorNumero(dados.order_number!);
-  const [plano, existente] = await Promise.all([pedido ? planoDoPedido(pedido) : null, cadastroAtivo(dados, pedido)]);
+  const pedido = await pedidoDoCpf(dados.cpf, dados.pedido_id, dados.item_id);
+  if (!pedido) throw new PedidoIndisponivelError(MSG_NAO_ENCONTRADO);
+  const fisico = pedido.tipo === 'fisico';
+
+  // Chip físico: vale o ICCID lançado no pedido; sem ele, o que o cliente digitou.
+  const iccidKey = fisico ? pedido.iccid ?? (dados.iccid ? chaveIccid(dados.iccid) : null) : null;
+  if (fisico && !iccidKey) throw new CampoInvalidoError({ iccid: MSG_ICCID });
+
+  const [plano, existente] = await Promise.all([planoDoPedido(pedido), cadastroAtivo(pedido, iccidKey)]);
 
   if (estaBloqueado(existente)) throw new CadastroBloqueadoError(MSG_BLOQUEADO);
+  if (pedido.checkin) throw new PedidoIndisponivelError(MSG_JA_ATIVADO);
 
   // O navegador só oferece os países do plano, mas quem decide é o servidor.
   const paises = plano?.paises.length ? dentroDoPlano(dados.countries, plano) : dados.countries;
@@ -374,20 +473,19 @@ export async function registrarCadastro(
     throw new CampoInvalidoError({ countries: 'Selecione apenas países incluídos no seu plano' });
   }
 
-  const iccidKey = fisico ? chaveIccid(dados.iccid) : null;
   const vigenciaFim = fimDaVigencia(dados.travel_start, plano?.dias);
   const agora = new Date().toISOString();
   const linha = {
     updated_at: agora,
-    iccid: fisico ? dados.iccid!.trim() : null,
+    iccid: iccidKey,
     iccid_key: iccidKey,
-    chip_type: dados.chip_type,
-    order_id: pedido?.id ?? null,
-    order_number: pedido?.numero ?? null,
-    order_source: pedido ? ORIGEM : null,
-    item_id: pedido?.item_id ?? null,
-    unit_index: pedido?.unit_index ?? null,
-    order_number_informed: dados.order_number ?? null,
+    chip_type: pedido.tipo,
+    order_id: pedido.id,
+    order_number: pedido.numero,
+    order_source: ORIGEM,
+    item_id: pedido.item_id,
+    unit_index: pedido.unit_index,
+    order_number_informed: null,
     full_name: dados.full_name.replace(/\s+/g, ' '),
     cpf: dados.cpf,
     birth_date: dados.birth_date ?? null,
@@ -409,12 +507,17 @@ export async function registrarCadastro(
   let id: string;
   if (existente) {
     const { error } = await supabaseServer.from(TABELA).update(linha).eq('id', existente.id);
-    if (error) throw new Error(`Falha ao atualizar cadastro: ${error.message}`);
+    if (error) {
+      // 23505: o ICCID digitado já está em outro cadastro ativo.
+      if ((error as any).code === '23505') throw new CadastroBloqueadoError(MSG_BLOQUEADO);
+      throw new Error(`Falha ao atualizar cadastro: ${error.message}`);
+    }
     id = existente.id;
   } else {
     const { data, error } = await supabaseServer.from(TABELA).insert(linha).select('id').single();
     if (error) {
-      // 23505 = índice único: outro envio do mesmo chip/pedido chegou junto com este.
+      // 23505 = índice único: outro envio do mesmo chip/pedido chegou junto com este, ou o
+      // ICCID digitado já está cadastrado.
       if ((error as any).code === '23505') {
         throw new CadastroBloqueadoError(MSG_BLOQUEADO);
       }
@@ -430,22 +533,20 @@ export async function registrarCadastro(
   if (erroVinculo) console.error('[gochip] submissão não vinculada ao cadastro:', erroVinculo.message);
 
   const tipoTexto = fisico ? 'chip físico' : 'eSIM';
-  if (pedido) {
-    await registrarNoCrm(pedido, [
-      '[GoChip] Cadastro do titular recebido pelo cliente',
-      iccidKey ? `${tipoTexto} ICCID ${iccidKey}` : tipoTexto,
-      `Titular: ${linha.full_name} (CPF ${mascararCpf(linha.cpf)})`,
-      `Contato: ${linha.email} / +${linha.phone}`,
-      `Ativação ${linha.travel_start}${vigenciaFim ? ` até ${vigenciaFim}` : ''} — ${linha.countries}`,
-    ].join(' — '));
-  }
+  await registrarNoCrm(pedido, [
+    '[GoChip] Cadastro do titular recebido pelo cliente',
+    iccidKey ? `${tipoTexto} ICCID ${iccidKey}` : tipoTexto,
+    `Titular: ${linha.full_name} (CPF ${mascararCpf(linha.cpf)})`,
+    `Contato: ${linha.email} / +${linha.phone}`,
+    `Ativação ${linha.travel_start}${vigenciaFim ? ` até ${vigenciaFim}` : ''} — ${linha.countries}`,
+  ].join(' — '));
 
   await dispararGatilho({
     evento: 'cadastro_recebido',
     cadastro_id: id,
     iccid: iccidKey,
     tipo_chip: linha.chip_type,
-    pedido: linha.order_number ?? linha.order_number_informed,
+    pedido: linha.order_number,
     origem: linha.order_source,
     nome: linha.full_name,
     email: linha.email,
@@ -459,7 +560,7 @@ export async function registrarCadastro(
     fim_uso: vigenciaFim,
   });
 
-  return { id, vinculadoAoPedido: !!pedido, vigenciaFim };
+  return { id, vinculadoAoPedido: true, vigenciaFim };
 }
 
 /**
@@ -470,7 +571,7 @@ export async function registrarCadastro(
  */
 async function gravarSubmissao(
   linha: Record<string, any>,
-  pedido: PedidoML | null,
+  pedido: PedidoML,
   plano: PlanoComprado | null,
   iccidKey: string | null,
 ): Promise<number> {
@@ -485,7 +586,7 @@ async function gravarSubmissao(
   ].filter(Boolean).join(' — ');
 
   const row = {
-    customer_order_number: pedido?.numero ?? linha.order_number_informed ?? (iccidKey ? `ICCID ${iccidKey}` : ''),
+    customer_order_number: pedido.numero,
     full_name: linha.full_name,
     email: linha.email,
     whatsapp: `+${linha.phone}`,

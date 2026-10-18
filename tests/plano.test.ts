@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fimDaVigencia, formatarDataBR, formatarFranquia, lerTitulo } from '@/lib/plano';
+import { fimDaVigencia, formatarDataBR, formatarFranquia, lerTitulo, tipoDoTitulo } from '@/lib/plano';
 
 describe('lerTitulo', () => {
   it('extrai destino, dias e franquia do título do Mercado Livre', () => {
@@ -46,5 +46,14 @@ describe('formatarFranquia', () => {
     expect(formatarFranquia('1GB/dia', true)).toBe('1GB/dia');
     expect(formatarFranquia('Unlimited')).toBe('Ilimitado');
     expect(formatarFranquia('', true)).toBe('Pacote diário');
+  });
+});
+
+describe('tipoDoTitulo', () => {
+  it('reconhece eSIM e chip físico pelo título', () => {
+    expect(tipoDoTitulo('Chip Virtual Esim Estados Unidos 30 Dias 3gb - Internet Esim')).toBe('virtual');
+    expect(tipoDoTitulo('Chip E-SIM Europa 15 dias')).toBe('virtual');
+    expect(tipoDoTitulo('Chip Físico Europa 33 Países - 5GB')).toBe('fisico');
+    expect(tipoDoTitulo('Chip Internacional Estados Unidos 30 Dias')).toBe('fisico');
   });
 });

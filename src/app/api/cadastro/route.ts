@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { cadastroSchema } from '@/lib/cadastro-schema';
-import { CadastroBloqueadoError, CampoInvalidoError, registrarCadastro } from '@/lib/pedido-central';
+import { CadastroBloqueadoError, CampoInvalidoError, PedidoIndisponivelError, registrarCadastro } from '@/lib/pedido-central';
 import { dentroDoLimite, ipDaRequisicao } from '@/lib/limite';
 
 export const dynamic = 'force-dynamic';
 
-// POST /api/cadastro — passo 2: grava os dados do titular no Pedido Central.
+// POST /api/cadastro — passo 3: grava os dados do titular no Pedido Central.
 export async function POST(request: Request) {
   const ip = ipDaRequisicao(request);
   if (!dentroDoLimite(`cadastro:${ip ?? 'desconhecido'}`, 10, 10 * 60_000)) {
@@ -38,6 +38,9 @@ export async function POST(request: Request) {
   } catch (e) {
     if (e instanceof CadastroBloqueadoError) {
       return NextResponse.json({ error: e.message }, { status: 409 });
+    }
+    if (e instanceof PedidoIndisponivelError) {
+      return NextResponse.json({ error: e.message }, { status: 404 });
     }
     if (e instanceof CampoInvalidoError) {
       return NextResponse.json({ error: e.message, campos: e.campos }, { status: 422 });

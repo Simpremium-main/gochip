@@ -115,3 +115,13 @@ export function formatarDataBR(iso: string | null | undefined): string {
   const [a, m, d] = iso.slice(0, 10).split('-');
   return `${d}/${m}/${a}`;
 }
+
+/**
+ * Chip físico ou eSIM, pelo título do anúncio ("Chip Virtual Esim Estados Unidos…" é eSIM).
+ * Na dúvida é físico: é o que tem cartão para conferir o ICCID.
+ */
+export function tipoDoTitulo(titulo: string | null | undefined): 'fisico' | 'virtual' {
+  const t = semAcento(titulo).toLowerCase();
+  if (/\bfisicos?\b/.test(t)) return 'fisico';
+  return /\be-?sims?\b|\bvirtua(?:l|is)\b/.test(t) ? 'virtual' : 'fisico';
+}

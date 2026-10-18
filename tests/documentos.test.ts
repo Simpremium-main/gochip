@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chaveIccid, cpfValido, formatarCpf, iccidValido, mascararCpf, normalizarTelefone } from '@/lib/documentos';
-import { cadastroSchema, consultaSchema } from '@/lib/cadastro-schema';
+import { cadastroSchema, consultaSchema, pedidosSchema } from '@/lib/cadastro-schema';
 
 describe('ICCID', () => {
   it('normaliza espaços e caixa como o Pedido Central', () => {
@@ -39,14 +39,14 @@ describe('telefone', () => {
 
 describe('cadastroSchema', () => {
   const valido = {
-    iccid: '8955 0123 4567 8901 234',
-    chip_type: 'fisico',
+    pedido_id: '12345',
+    item_id: 678,
+    iccid: '',
     full_name: 'Maria da Silva',
     cpf: '529.982.247-25',
     birth_date: '1990-05-10',
     email: ' Maria@Exemplo.com ',
     phone: '(11) 91234-5678',
-    order_number: '',
     travel_start: '2026-10-10',
     countries: ['Estados Unidos'],
     observation: '',
@@ -59,7 +59,8 @@ describe('cadastroSchema', () => {
     expect(r.cpf).toBe('52998224725');
     expect(r.phone).toBe('5511912345678');
     expect(r.email).toBe('maria@exemplo.com');
-    expect(r.order_number).toBeUndefined();
+    expect(r.iccid).toBeUndefined();
+    expect(r.item_id).toBe(678);
     expect(r.countries).toEqual(['Estados Unidos']);
   });
 
@@ -69,15 +70,16 @@ describe('cadastroSchema', () => {
     expect(campos).toEqual(expect.arrayContaining(['travel_start', 'countries']));
   });
 
-  it('chip físico exige ICCID; eSIM exige número do pedido, sem ICCID', () => {
-    const semIccid = cadastroSchema.safeParse({ ...valido, iccid: '' });
-    expect(semIccid.success ? [] : semIccid.error.issues.map((i) => i.path[0])).toEqual(['iccid']);
+  it('exige o pedido escolhido; item é opcional', () => {
+    const semPedido = cadastroSchema.safeParse({ ...valido, pedido_id: '' });
+    expect(semPedido.success ? [] : semPedido.error.issues.map((i) => i.path[0])).toEqual(['pedido_id']);
+    expect(cadastroSchema.parse({ ...valido, item_id: null }).item_id).toBeNull();
+  });
 
-    const esim = cadastroSchema.safeParse({ ...valido, chip_type: 'virtual', iccid: '', order_number: '2000-0123-4567-8901' });
-    expect(esim.success && esim.data.order_number).toBe('2000012345678901');
-
-    const esimSemPedido = cadastroSchema.safeParse({ ...valido, chip_type: 'virtual', iccid: '' });
-    expect(esimSemPedido.success ? [] : esimSemPedido.error.issues.map((i) => i.path[0])).toEqual(['order_number']);
+  it('ICCID digitado precisa ser válido', () => {
+    expect(cadastroSchema.safeParse({ ...valido, iccid: '8955 0123 4567 8901 234' }).success).toBe(true);
+    const r = cadastroSchema.safeParse({ ...valido, iccid: '1234' });
+    expect(r.success ? [] : r.error.issues.map((i) => i.path[0])).toEqual(['iccid']);
   });
 
   it('exige consentimento, nome completo e CPF válido', () => {
@@ -92,12 +94,14 @@ describe('cadastroSchema', () => {
   });
 });
 
-describe('consultaSchema', () => {
-  it('pede CPF e a identificação do tipo de chip', () => {
-    expect(consultaSchema.safeParse({ chip_type: 'virtual', order_number: '2000012345678901', cpf: '52998224725' }).success).toBe(true);
-    const r = consultaSchema.safeParse({ chip_type: 'fisico', cpf: '123' });
-    expect(r.success ? [] : r.error.issues.map((i) => i.path[0])).toEqual(expect.arrayContaining(['cpf']));
-    const s = consultaSchema.safeParse({ chip_type: 'fisico', cpf: '52998224725' });
-    expect(s.success ? [] : s.error.issues.map((i) => i.path[0])).toEqual(['iccid']);
+describe('pedidosSchema e consultaSchema', () => {
+  it('passo 1 pede só o CPF', () => {
+    expect(pedidosSchema.parse({ cpf: '529.982.247-25' }).cpf).toBe('52998224725');
+    expect(pedidosSchema.safeParse({ cpf: '123' }).success).toBe(false);
+  });
+  it('passo 2 pede o CPF e o pedido escolhido', () => {
+    expect(consultaSchema.safeParse({ cpf: '52998224725', pedido_id: '12345', item_id: 9 }).success).toBe(true);
+    const r = consultaSchema.safeParse({ cpf: '52998224725', pedido_id: 'abc' });
+    expect(r.success ? [] : r.error.issues.map((i) => i.path[0])).toEqual(['pedido_id']);
   });
 });
