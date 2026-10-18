@@ -7,44 +7,69 @@
     -webkit-tap-highlight-color: transparent;
   }
   body {
-    background:
-      radial-gradient(1200px 400px at 50% -120px, rgba(37, 99, 235, 0.10), transparent 70%),
-      #f8fafc;
+    @apply bg-fundo;
   }
 }
 
 @layer components {
+  /* Moldura branca da página, sobre o fundo azul. */
   .cartao {
-    @apply rounded-2xl border border-slate-200/80 bg-white shadow-cartao;
+    @apply rounded-[28px] bg-white shadow-cartao;
+  }
+  /* Bloco de conteúdo com contorno fino (ex.: "Dados do titular"). */
+  .painel {
+    @apply rounded-2xl border border-slate-300/80 bg-white p-5 sm:p-8;
+  }
+  /* Bloco lilás de resumo (ex.: "Seu plano"). */
+  .resumo {
+    @apply rounded-2xl bg-marca-claro p-5 sm:p-7;
+  }
+  .titulo {
+    @apply text-2xl font-light tracking-tight text-slate-900;
+  }
+  .subtitulo {
+    @apply mt-1 text-sm font-light text-slate-400;
+  }
+
+  /* Campo com o rótulo apoiado na borda, como um fieldset. */
+  .grupo {
+    @apply relative;
+  }
+  .rotulo {
+    @apply pointer-events-none absolute -top-2 left-3 z-10 bg-white px-1.5 text-xs font-light leading-4 text-slate-500;
   }
   .campo {
-    @apply h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-[15px] text-slate-900
-      placeholder:text-slate-400 outline-none transition
-      hover:border-slate-300 focus:border-marca focus:ring-4 focus:ring-marca/10;
+    @apply h-12 w-full rounded-lg border border-slate-400/70 bg-white px-4 text-[15px] font-light text-slate-900
+      placeholder:text-slate-300 outline-none transition
+      hover:border-slate-500 focus:border-marca focus:ring-4 focus:ring-marca/10;
   }
   textarea.campo {
-    @apply h-auto py-2.5;
+    @apply h-auto py-3;
   }
   .campo-erro {
     @apply border-red-400 hover:border-red-400 focus:border-red-500 focus:ring-red-500/10;
   }
-  .rotulo {
-    @apply mb-1.5 block text-[13px] font-medium text-slate-700;
-  }
   .ajuda {
-    @apply mt-1.5 text-xs text-slate-500;
+    @apply mt-1.5 text-xs font-light text-slate-400;
   }
   .secao {
-    @apply text-xs font-semibold uppercase tracking-[0.08em] text-slate-400;
+    @apply text-xs font-normal uppercase tracking-[0.08em] text-slate-400;
+  }
+  .caixa {
+    @apply h-5 w-5 shrink-0 cursor-pointer rounded accent-marca;
   }
   .botao {
-    @apply inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-marca px-4 text-[15px]
-      font-semibold text-white shadow-sm shadow-marca/30 transition
-      hover:bg-marca-escuro focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-marca/20
+    @apply inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-marca px-4 text-[15px]
+      font-normal text-white transition
+      hover:bg-marca-escuro focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-marca/25
       disabled:cursor-not-allowed disabled:opacity-60;
   }
   .botao-secundario {
-    @apply inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-4
-      text-[15px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50;
+    @apply inline-flex h-12 items-center justify-center rounded-lg border border-slate-300 bg-white px-4
+      text-[15px] font-light text-slate-700 transition hover:border-slate-400 hover:bg-slate-50
+      disabled:opacity-60;
+  }
+  .link {
+    @apply font-normal text-marca hover:text-marca-escuro;
   }
 }

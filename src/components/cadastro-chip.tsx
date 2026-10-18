@@ -5,7 +5,7 @@ import {
   cadastroSchema, pedidosSchema, type Consulta, type PedidoPendente, type ResumoCadastro, type TipoChip,
 } from '@/lib/cadastro-schema';
 import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
-import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista, type PlanoComprado } from '@/lib/plano';
+import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista } from '@/lib/plano';
 
 type Etapa = 'cpf' | 'pedidos' | 'formulario' | 'concluido' | 'bloqueado';
 
@@ -242,416 +242,450 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
 
   const classeCampo = (campo: string) => `campo ${erros[campo] ? 'campo-erro' : ''}`;
   const Erro = ({ campo }: { campo: string }) =>
-    erros[campo] ? <p className="mt-1.5 text-xs font-medium text-red-600">{erros[campo]}</p> : null;
+    erros[campo] ? <p className="mt-1.5 text-xs text-red-600">{erros[campo]}</p> : null;
 
   return (
-    <div className="space-y-5">
+    <div className="cartao px-4 py-7 sm:px-10 sm:py-10">
       <Passos etapa={etapa} />
 
       {erroGeral && (
-        <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div
+          role="alert"
+          className="mx-auto mt-6 flex max-w-md items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-light text-red-700"
+        >
           <Icone nome="alerta" className="mt-0.5 h-4 w-4 shrink-0" />
           {erroGeral}
         </div>
       )}
 
-      {etapa === 'cpf' && (
-        <form onSubmit={listarPedidos} noValidate className="cartao space-y-6 p-5 sm:p-7">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Ative seu chip</h1>
-            <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
-              Informe o CPF da sua conta no Mercado Livre para ver as compras que ainda precisam ser ativadas.
-            </p>
-          </div>
-
-          <div>
-            <label htmlFor="cpf" className="rotulo">CPF da conta no Mercado Livre</label>
-            <input
-              id="cpf"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="000.000.000-00"
-              className={classeCampo('cpf')}
-              value={cpf}
-              onChange={(e) => {
-                setCpf(formatarCpf(e.target.value));
-                setErros(({ cpf: _, ...r }) => r);
-              }}
-            />
-            <Erro campo="cpf" />
-          </div>
-
-          <button type="submit" className="botao" disabled={!!carregando}>
-            {carregando ? 'Consultando…' : <>Continuar <Icone nome="seta" className="h-4 w-4" /></>}
-          </button>
-        </form>
-      )}
-
-      {etapa === 'pedidos' && (
-        <div className="cartao space-y-5 p-5 sm:p-7">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Escolha o pedido</h1>
-            <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
-              Compras do CPF <strong className="text-slate-700">{cpf}</strong> que ainda não têm data de ativação.
-            </p>
-          </div>
-
-          {pedidos.length > 0 ? (
-            <ul className="space-y-3">
-              {pedidos.map((p) => {
-                const chave = `${p.pedido_id}:${p.item_id ?? ''}`;
-                const detalhes = [p.destino, p.dias && `${p.dias} dias`, p.franquia].filter(Boolean).join(' · ');
-                return (
-                  <li key={chave}>
-                    <button
-                      type="button"
-                      onClick={() => escolherPedido(p)}
-                      disabled={!!carregando}
-                      className="flex w-full items-center gap-3.5 rounded-xl border border-slate-200 bg-white p-3.5 text-left transition hover:border-marca hover:bg-marca-claro disabled:opacity-60"
-                    >
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-marca-claro text-marca">
-                        <Icone nome={p.tipo === 'fisico' ? 'chip' : 'esim'} className="h-5 w-5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-semibold text-slate-900">
-                          {TIPO_TEXTO[p.tipo]} · pedido final {p.pedidoFinal}
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-slate-500">{detalhes || p.titulo}</span>
-                        <span className="mt-0.5 block text-xs text-slate-400">
-                          {p.compradoEm && <>Compra em {formatarDataBR(p.compradoEm)}</>}
-                          {p.envioIncompleto && <span className="text-amber-700"> · envio não concluído</span>}
-                        </span>
-                      </span>
-                      {carregando === chave ? (
-                        <span className="text-xs text-slate-500">Abrindo…</span>
-                      ) : (
-                        <Icone nome="seta" className="h-4 w-4 shrink-0 text-slate-400" />
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm leading-relaxed text-slate-600">
-              <p>
-                Não encontramos compras pendentes de ativação neste CPF. Confira se é o CPF da conta do Mercado Livre que
-                fez a compra ou fale com o suporte.
-              </p>
-              <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" />
-            </div>
-          )}
-
-          <button type="button" onClick={recomecar} className="botao-secundario w-full" disabled={!!carregando}>
-            Usar outro CPF
-          </button>
-        </div>
-      )}
-
-      {etapa === 'formulario' && consulta && (
-        <form onSubmit={enviar} noValidate className="space-y-5">
-          <div className="cartao overflow-hidden">
-            {plano ? (
-              <CartaoPlano plano={plano} />
-            ) : (
-              <div className="p-5">
-                <p className="secao">Sua compra</p>
-                <p className="mt-2 text-sm leading-relaxed text-slate-600">{escolhido?.titulo}</p>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-sm">
-              <span className="text-slate-600">
-                {TIPO_TEXTO[tipo]}
-                {consulta.iccid && <span className="ml-1.5 font-mono text-xs text-slate-500">{consulta.iccid}</span>}
-                {consulta.pedidoFinal && <> · pedido final <strong className="text-slate-800">{consulta.pedidoFinal}</strong></>}
-              </span>
-              <button type="button" onClick={voltarParaPedidos} className="text-sm font-medium text-marca hover:text-marca-escuro">
-                Trocar pedido
-              </button>
-            </div>
-            {consulta.jaCadastrado && (
-              <p className="border-t border-amber-100 bg-amber-50 px-5 py-2.5 text-sm text-amber-800">
-                O envio anterior deste pedido não foi concluído. Confira os dados e envie para concluir.
-              </p>
-            )}
-          </div>
-
-          <section className="cartao space-y-5 p-5 sm:p-7">
+      <div className="mt-8 sm:mt-10">
+        {etapa === 'cpf' && (
+          <form onSubmit={listarPedidos} noValidate className="painel mx-auto max-w-md space-y-7">
             <div>
-              <h2 className="text-lg font-semibold tracking-tight">Dados do titular</h2>
-              {consulta.preenchimento && (
-                <p className="mt-1 text-sm text-slate-500">Preenchemos com os dados da compra. Confira e corrija se preciso.</p>
-              )}
+              <h1 className="titulo">Ative seu chip</h1>
+              <p className="subtitulo">Informe o CPF da sua conta no Mercado Livre para ver as compras a ativar.</p>
             </div>
 
-            {pedeIccid && (
-              <div>
-                <label htmlFor="iccid" className="rotulo">Número do chip (ICCID)</label>
-                <input
-                  id="iccid"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  placeholder="8955 0000 0000 0000 000"
-                  className={`${classeCampo('iccid')} font-mono tracking-wider`}
-                  value={form.iccid}
-                  onChange={(e) => alterar('iccid', e.target.value)}
-                />
-                <p className="ajuda">Impresso no cartão do chip, abaixo do código de barras.</p>
-                <Erro campo="iccid" />
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="full_name" className="rotulo">Nome completo</label>
+            <div className="grupo">
+              <label htmlFor="cpf" className="rotulo">CPF da conta no Mercado Livre</label>
               <input
-                id="full_name"
-                autoComplete="name"
-                className={classeCampo('full_name')}
-                value={form.full_name}
-                onChange={(e) => alterar('full_name', e.target.value)}
+                id="cpf"
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="000.000.000-00"
+                className={classeCampo('cpf')}
+                value={cpf}
+                onChange={(e) => {
+                  setCpf(formatarCpf(e.target.value));
+                  setErros(({ cpf: _, ...r }) => r);
+                }}
               />
-              <Erro campo="full_name" />
+              <Erro campo="cpf" />
             </div>
-
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <span className="rotulo">CPF da conta no Mercado Livre</span>
-                <p className="campo flex items-center bg-slate-50 text-slate-600">{cpf}</p>
-                <Erro campo="cpf" />
-              </div>
-              <div>
-                <label htmlFor="birth_date" className="rotulo">
-                  Data de nascimento <span className="font-normal text-slate-400">(opcional)</span>
-                </label>
-                <input
-                  id="birth_date"
-                  type="date"
-                  autoComplete="bday"
-                  className={classeCampo('birth_date')}
-                  value={form.birth_date}
-                  onChange={(e) => alterar('birth_date', e.target.value)}
-                />
-                <Erro campo="birth_date" />
-              </div>
-            </div>
-
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <label htmlFor="phone" className="rotulo">Telefone / WhatsApp</label>
-                <input
-                  id="phone"
-                  type="tel"
-                  autoComplete="tel"
-                  placeholder="(11) 91234-5678"
-                  className={classeCampo('phone')}
-                  value={form.phone}
-                  onChange={(e) => alterar('phone', e.target.value)}
-                />
-                <Erro campo="phone" />
-              </div>
-              <div>
-                <label htmlFor="email" className="rotulo">E-mail</label>
-                <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  className={classeCampo('email')}
-                  value={form.email}
-                  onChange={(e) => alterar('email', e.target.value)}
-                />
-                <Erro campo="email" />
-              </div>
-            </div>
-          </section>
-
-          <section className="cartao space-y-5 p-5 sm:p-7">
-            <h2 className="text-lg font-semibold tracking-tight">Ativação</h2>
-
-            <div>
-              <label htmlFor="travel_start" className="rotulo">Data de ativação</label>
-              <input
-                id="travel_start"
-                type="date"
-                min={hojeIso()}
-                className={classeCampo('travel_start')}
-                value={form.travel_start}
-                onChange={(e) => alterar('travel_start', e.target.value)}
-              />
-              <Erro campo="travel_start" />
-              {vigenciaFim && (
-                <div className="mt-3 flex items-center gap-3 rounded-xl border border-marca-borda bg-marca-claro px-4 py-3">
-                  <Icone nome="calendario" className="h-5 w-5 shrink-0 text-marca" />
-                  <p className="text-sm text-marca-profundo">
-                    Válido de <strong>{formatarDataBR(form.travel_start)}</strong> até{' '}
-                    <strong>{formatarDataBR(vigenciaFim)}</strong>
-                    <span className="text-marca-profundo/70"> · {plano!.dias} dias</span>
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <span className="rotulo">Países que vai visitar</span>
-              {cobertura.length === 1 ? (
-                <div className="flex items-center gap-2 text-sm text-slate-700">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-marca px-3 py-1.5 text-sm font-medium text-white">
-                    <Icone nome="check" className="h-3.5 w-3.5" /> {cobertura[0]}
-                  </span>
-                  <span className="text-slate-500">incluído no seu plano</span>
-                </div>
-              ) : cobertura.length > 1 ? (
-                <div className={`rounded-xl border p-3.5 ${erros.countries ? 'border-red-400' : 'border-slate-200'}`}>
-                  <div className="mb-3 flex items-center justify-between gap-2 text-xs text-slate-500">
-                    <span>Seu plano cobre {cobertura.length} países. Toque para marcar.</span>
-                    {form.countries.length > 0 && (
-                      <span className="shrink-0 rounded-full bg-marca-claro px-2 py-0.5 font-semibold text-marca">
-                        {form.countries.length} selecionado{form.countries.length > 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div>
-                  {cobertura.length > 8 && (
-                    <div className="relative mb-3">
-                      <Icone nome="busca" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="search"
-                        placeholder="Buscar país"
-                        className="campo h-10 pl-9 text-sm"
-                        value={filtroPais}
-                        onChange={(e) => setFiltroPais(e.target.value)}
-                      />
-                    </div>
-                  )}
-                  <div className="flex max-h-60 flex-wrap gap-2 overflow-y-auto">
-                    {paisesVisiveis.map((p) => {
-                      const marcado = form.countries.includes(p);
-                      return (
-                        <button
-                          key={p}
-                          type="button"
-                          aria-pressed={marcado}
-                          onClick={() => alternarPais(p)}
-                          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
-                            marcado
-                              ? 'border-marca bg-marca font-medium text-white'
-                              : 'border-slate-200 bg-white text-slate-700 hover:border-marca-borda hover:bg-marca-claro'
-                          }`}
-                        >
-                          {marcado && <Icone nome="check" className="h-3.5 w-3.5" />}
-                          {p}
-                        </button>
-                      );
-                    })}
-                    {paisesVisiveis.length === 0 && <p className="text-sm text-slate-500">Nenhum país com esse nome no seu plano.</p>}
-                  </div>
-                </div>
-              ) : (
-                <input
-                  id="countries_texto"
-                  placeholder="Ex.: Portugal, Espanha"
-                  className={classeCampo('countries')}
-                  value={form.countries_texto}
-                  onChange={(e) => alterar('countries_texto', e.target.value)}
-                />
-              )}
-              <Erro campo="countries" />
-            </div>
-
-            <div>
-              <label htmlFor="observation" className="rotulo">
-                Observações <span className="font-normal text-slate-400">(opcional)</span>
-              </label>
-              <textarea
-                id="observation"
-                rows={3}
-                className={classeCampo('observation')}
-                value={form.observation}
-                onChange={(e) => alterar('observation', e.target.value)}
-              />
-              <Erro campo="observation" />
-            </div>
-          </section>
-
-          {/* Armadilha para robôs: invisível para pessoas. */}
-          <input
-            type="text"
-            name="website"
-            tabIndex={-1}
-            autoComplete="off"
-            aria-hidden="true"
-            className="hidden"
-            value={form.website}
-            onChange={(e) => alterar('website', e.target.value)}
-          />
-
-          <div className="space-y-4">
-            <label className="flex items-start gap-3 text-sm leading-relaxed text-slate-600">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-5 w-5 shrink-0 rounded accent-marca"
-                checked={form.lgpd}
-                onChange={(e) => alterar('lgpd', e.target.checked)}
-              />
-              <span>Autorizo o uso destes dados para ativar e dar suporte à linha, conforme a LGPD.</span>
-            </label>
-            <Erro campo="lgpd" />
 
             <button type="submit" className="botao" disabled={!!carregando}>
-              {carregando ? 'Enviando…' : 'Enviar cadastro'}
+              {carregando ? 'Consultando…' : <>Continuar <Icone nome="seta" className="h-4 w-4" /></>}
             </button>
-          </div>
-        </form>
-      )}
+          </form>
+        )}
 
-      {etapa === 'concluido' && resultado && (
-        <div className="cartao space-y-5 p-7 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-marca-claro ring-8 ring-marca-claro/50">
-            <Icone nome="check" className="h-7 w-7 text-marca" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Cadastro recebido</h1>
-            <p className="mt-2 text-sm leading-relaxed text-slate-500">
-              {resultado.vinculadoAoPedido
-                ? 'Localizamos o seu pedido. Nossa equipe confere e segue com a ativação.'
-                : 'Nossa equipe vai localizar o seu pedido e seguir com a ativação.'}
-            </p>
-          </div>
-          {resultado.vigenciaFim && (
-            <div className="rounded-xl border border-marca-borda bg-marca-claro px-4 py-3 text-sm text-marca-profundo">
-              Ativação em <strong>{formatarDataBR(form.travel_start)}</strong> · válido até{' '}
-              <strong>{formatarDataBR(resultado.vigenciaFim)}</strong>
+        {etapa === 'pedidos' && (
+          <div className="mx-auto max-w-md space-y-6">
+            <div className="text-center">
+              <h1 className="titulo">Escolha o pedido</h1>
+              <p className="subtitulo">
+                Compras do CPF <span className="font-normal text-slate-600">{cpf}</span> ainda sem data de ativação
+              </p>
             </div>
-          )}
-          <div className="space-y-3">
-            <p className="text-xs text-slate-500">Os dados enviados não podem mais ser alterados por aqui.</p>
-            <BotaoSuporte link={suporte} texto="Precisa corrigir algo? Fale com o suporte" />
-            <button type="button" onClick={voltarParaPedidos} className="botao-secundario w-full">
-              Ativar outro pedido
-            </button>
-          </div>
-        </div>
-      )}
 
-      {etapa === 'bloqueado' && (
-        <div className="cartao space-y-5 p-7 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-marca-claro ring-8 ring-marca-claro/50">
-            <Icone nome="cadeado" className="h-7 w-7 text-marca" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Cadastro já realizado</h1>
-            <p className="mt-2 text-sm leading-relaxed text-slate-500">
-              Já recebemos os dados deste pedido. Por segurança, eles não podem
-              ser alterados por aqui. Para corrigir alguma informação, fale com o nosso suporte.
-            </p>
-          </div>
-          {consulta?.resumo && <ResumoDoCadastro resumo={consulta.resumo} />}
-          <div className="space-y-3">
-            <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" destaque />
-            <button type="button" onClick={voltarParaPedidos} className="botao-secundario w-full">
-              Ativar outro pedido
+            {pedidos.length > 0 ? (
+              <ul className="resumo space-y-3 !p-3 sm:!p-4">
+                {pedidos.map((p) => {
+                  const chave = `${p.pedido_id}:${p.item_id ?? ''}`;
+                  const detalhes = [p.destino, p.dias && `${p.dias} dias`, p.franquia].filter(Boolean).join(' · ');
+                  return (
+                    <li key={chave}>
+                      <button
+                        type="button"
+                        onClick={() => escolherPedido(p)}
+                        disabled={!!carregando}
+                        className="flex w-full items-center gap-4 rounded-xl bg-white p-4 text-left ring-1 ring-transparent transition hover:ring-marca disabled:opacity-60"
+                      >
+                        <Capa tipo={p.tipo} pequena />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[15px] text-slate-900">
+                            {TIPO_TEXTO[p.tipo]} <span className="text-xs font-light text-slate-400">· final {p.pedidoFinal}</span>
+                          </span>
+                          <span className="mt-0.5 block truncate text-sm font-light text-slate-500">{detalhes || p.titulo}</span>
+                          <span className="mt-1 block text-xs font-light text-slate-400">
+                            {p.compradoEm && <>Compra em {formatarDataBR(p.compradoEm)}</>}
+                            {p.envioIncompleto && <span className="text-amber-600"> · envio não concluído</span>}
+                          </span>
+                        </span>
+                        {carregando === chave ? (
+                          <span className="text-xs font-light text-slate-400">Abrindo…</span>
+                        ) : (
+                          <Icone nome="seta" className="h-4 w-4 shrink-0 text-marca" />
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="resumo space-y-4 text-center text-sm font-light leading-relaxed text-slate-600">
+                <p>
+                  Não encontramos compras pendentes de ativação neste CPF. Confira se é o CPF da conta do Mercado Livre
+                  que fez a compra ou fale com o suporte.
+                </p>
+                <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" />
+              </div>
+            )}
+
+            <button type="button" onClick={recomecar} className="botao-secundario w-full" disabled={!!carregando}>
+              Usar outro CPF
             </button>
           </div>
-        </div>
-      )}
+        )}
+
+        {etapa === 'formulario' && consulta && (
+          <form onSubmit={enviar} noValidate className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-10">
+            <div className="painel space-y-10">
+              <section className="space-y-7">
+                <div>
+                  <h2 className="titulo">Dados do titular</h2>
+                  <p className="subtitulo">
+                    {consulta.preenchimento?.full_name
+                      ? 'Preenchemos com os dados da compra. Confira e corrija se preciso.'
+                      : 'Preencha com os dados de quem vai usar o chip.'}
+                  </p>
+                </div>
+
+                {pedeIccid && (
+                  <div className="grupo">
+                    <label htmlFor="iccid" className="rotulo">Número do chip (ICCID)</label>
+                    <input
+                      id="iccid"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="8955 0000 0000 0000 000"
+                      className={`${classeCampo('iccid')} font-mono tracking-wider`}
+                      value={form.iccid}
+                      onChange={(e) => alterar('iccid', e.target.value)}
+                    />
+                    <p className="ajuda">Impresso no cartão do chip, abaixo do código de barras.</p>
+                    <Erro campo="iccid" />
+                  </div>
+                )}
+
+                <div className="grupo">
+                  <label htmlFor="full_name" className="rotulo">Nome completo</label>
+                  <input
+                    id="full_name"
+                    autoComplete="name"
+                    className={classeCampo('full_name')}
+                    value={form.full_name}
+                    onChange={(e) => alterar('full_name', e.target.value)}
+                  />
+                  <Erro campo="full_name" />
+                </div>
+
+                <div className="grid gap-7 sm:grid-cols-2 sm:gap-5">
+                  <div className="grupo">
+                    <span className="rotulo">CPF</span>
+                    <p className="campo flex items-center text-slate-500">{cpf}</p>
+                    <Erro campo="cpf" />
+                  </div>
+                  <div className="grupo">
+                    <label htmlFor="birth_date" className="rotulo">Nascimento (opcional)</label>
+                    <input
+                      id="birth_date"
+                      type="date"
+                      autoComplete="bday"
+                      className={classeCampo('birth_date')}
+                      value={form.birth_date}
+                      onChange={(e) => alterar('birth_date', e.target.value)}
+                    />
+                    <Erro campo="birth_date" />
+                  </div>
+                </div>
+
+                <div className="grupo">
+                  <label htmlFor="email" className="rotulo">E-mail</label>
+                  <input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    className={classeCampo('email')}
+                    value={form.email}
+                    onChange={(e) => alterar('email', e.target.value)}
+                  />
+                  <Erro campo="email" />
+                </div>
+
+                <div className="grupo">
+                  <label htmlFor="phone" className="rotulo">Telefone / WhatsApp</label>
+                  <input
+                    id="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="(11) 91234-5678"
+                    className={classeCampo('phone')}
+                    value={form.phone}
+                    onChange={(e) => alterar('phone', e.target.value)}
+                  />
+                  <Erro campo="phone" />
+                </div>
+              </section>
+
+              <section className="space-y-7">
+                <div>
+                  <h2 className="titulo">Ativação</h2>
+                  <p className="subtitulo">Quando o chip deve começar a funcionar e para onde você vai.</p>
+                </div>
+
+                <div className="grupo">
+                  <label htmlFor="travel_start" className="rotulo">Data de ativação</label>
+                  <input
+                    id="travel_start"
+                    type="date"
+                    min={hojeIso()}
+                    className={classeCampo('travel_start')}
+                    value={form.travel_start}
+                    onChange={(e) => alterar('travel_start', e.target.value)}
+                  />
+                  <Erro campo="travel_start" />
+                </div>
+
+                <div className="grupo">
+                  <span className="rotulo">Países que vai visitar</span>
+                  {cobertura.length >= 1 ? (
+                    <div className={`rounded-lg border px-4 pb-4 pt-5 ${erros.countries ? 'border-red-400' : 'border-slate-400/70'}`}>
+                      {cobertura.length === 1 ? (
+                        <div className="flex items-center gap-2 text-sm font-light text-slate-500">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-marca px-3 py-1.5 text-sm text-white">
+                            <Icone nome="check" className="h-3.5 w-3.5" /> {cobertura[0]}
+                          </span>
+                          incluído no seu plano
+                        </div>
+                      ) : (
+                        <>
+                          <div className="mb-3 flex items-center justify-between gap-2 text-xs font-light text-slate-400">
+                            <span>Seu plano cobre {cobertura.length} países. Toque para marcar.</span>
+                            {form.countries.length > 0 && (
+                              <span className="shrink-0 rounded-full bg-marca-claro px-2 py-0.5 text-marca">
+                                {form.countries.length} selecionado{form.countries.length > 1 ? 's' : ''}
+                              </span>
+                            )}
+                          </div>
+                          {cobertura.length > 8 && (
+                            <div className="relative mb-3">
+                              <Icone nome="busca" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                              <input
+                                type="search"
+                                placeholder="Buscar país"
+                                className="campo h-10 pl-9 text-sm"
+                                value={filtroPais}
+                                onChange={(e) => setFiltroPais(e.target.value)}
+                              />
+                            </div>
+                          )}
+                          <div className="flex max-h-60 flex-wrap gap-2 overflow-y-auto">
+                            {paisesVisiveis.map((p) => {
+                              const marcado = form.countries.includes(p);
+                              return (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  aria-pressed={marcado}
+                                  onClick={() => alternarPais(p)}
+                                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
+                                    marcado
+                                      ? 'border-marca bg-marca text-white'
+                                      : 'border-slate-300 bg-white font-light text-slate-700 hover:border-marca hover:text-marca'
+                                  }`}
+                                >
+                                  {marcado && <Icone nome="check" className="h-3.5 w-3.5" />}
+                                  {p}
+                                </button>
+                              );
+                            })}
+                            {paisesVisiveis.length === 0 && (
+                              <p className="text-sm font-light text-slate-400">Nenhum país com esse nome no seu plano.</p>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <input
+                      id="countries_texto"
+                      placeholder="Ex.: Portugal, Espanha"
+                      className={classeCampo('countries')}
+                      value={form.countries_texto}
+                      onChange={(e) => alterar('countries_texto', e.target.value)}
+                    />
+                  )}
+                  <Erro campo="countries" />
+                </div>
+
+                <div className="grupo">
+                  <label htmlFor="observation" className="rotulo">Observações (opcional)</label>
+                  <textarea
+                    id="observation"
+                    rows={3}
+                    className={classeCampo('observation')}
+                    value={form.observation}
+                    onChange={(e) => alterar('observation', e.target.value)}
+                  />
+                  <Erro campo="observation" />
+                </div>
+              </section>
+
+              {/* Armadilha para robôs: invisível para pessoas. */}
+              <input
+                type="text"
+                name="website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                className="hidden"
+                value={form.website}
+                onChange={(e) => alterar('website', e.target.value)}
+              />
+            </div>
+
+            <aside className="resumo lg:sticky lg:top-6">
+              <h2 className="text-xl font-light text-slate-900">Seu plano</h2>
+
+              <div className="mt-6 flex gap-4">
+                <Capa tipo={tipo} />
+                <div className="min-w-0">
+                  <p className="text-[15px] leading-snug text-slate-900">{plano?.destino || TIPO_TEXTO[tipo]}</p>
+                  <p className="mt-1 text-xs font-light leading-snug text-slate-500">{plano?.titulo || escolhido?.titulo}</p>
+                  <p className="mt-2 text-xs font-light text-slate-400">
+                    {TIPO_TEXTO[tipo]}
+                    {consulta.pedidoFinal && <> · pedido final {consulta.pedidoFinal}</>}
+                  </p>
+                  {consulta.iccid && <p className="mt-0.5 font-mono text-[11px] text-slate-400">{consulta.iccid}</p>}
+                </div>
+              </div>
+
+              <dl className="mt-6 space-y-3 text-sm">
+                <Linha rotulo="Período" valor={plano?.dias ? `${plano.dias} dias` : '—'} />
+                <Linha rotulo="Internet" valor={plano?.franquia || '—'} />
+                <Linha rotulo="Ativação" valor={form.travel_start ? formatarDataBR(form.travel_start) : '—'} />
+              </dl>
+              <div className="mt-5 border-t border-slate-300/70 pt-5">
+                <Linha rotulo="Válido até" valor={vigenciaFim ? formatarDataBR(vigenciaFim) : '—'} forte />
+              </div>
+
+              {consulta.jaCadastrado && (
+                <p className="mt-5 rounded-lg bg-amber-50 px-3 py-2.5 text-xs font-light leading-relaxed text-amber-800">
+                  O envio anterior deste pedido não foi concluído. Confira os dados e envie para concluir.
+                </p>
+              )}
+
+              <label className="mt-6 flex items-start gap-2.5 text-xs font-light leading-relaxed text-slate-500">
+                <input
+                  type="checkbox"
+                  className="caixa mt-px"
+                  checked={form.lgpd}
+                  onChange={(e) => alterar('lgpd', e.target.checked)}
+                />
+                <span>
+                  Autorizo o uso destes dados para ativar e dar suporte à linha, conforme a <span className="text-marca">LGPD</span>.
+                </span>
+              </label>
+              <Erro campo="lgpd" />
+
+              <button type="submit" className="botao mt-6" disabled={!!carregando}>
+                {carregando ? 'Enviando…' : 'Enviar cadastro'}
+              </button>
+              <button type="button" onClick={voltarParaPedidos} className="link mt-4 block w-full text-center text-sm">
+                Trocar pedido
+              </button>
+            </aside>
+          </form>
+        )}
+
+        {etapa === 'concluido' && resultado && (
+          <div className="painel mx-auto max-w-md space-y-6 text-center">
+            <Selo nome="check" />
+            <div>
+              <h1 className="titulo">Cadastro recebido</h1>
+              <p className="subtitulo leading-relaxed">
+                {resultado.vinculadoAoPedido
+                  ? 'Localizamos o seu pedido. Nossa equipe confere e segue com a ativação.'
+                  : 'Nossa equipe vai localizar o seu pedido e seguir com a ativação.'}
+              </p>
+            </div>
+            {resultado.vigenciaFim && (
+              <div className="resumo !p-4 text-sm font-light text-slate-600">
+                Ativação em <span className="font-normal text-slate-900">{formatarDataBR(form.travel_start)}</span> · válido até{' '}
+                <span className="font-normal text-slate-900">{formatarDataBR(resultado.vigenciaFim)}</span>
+              </div>
+            )}
+            <div className="space-y-3">
+              <p className="text-xs font-light text-slate-400">Os dados enviados não podem mais ser alterados por aqui.</p>
+              <BotaoSuporte link={suporte} texto="Precisa corrigir algo? Fale com o suporte" />
+              <button type="button" onClick={voltarParaPedidos} className="botao-secundario w-full">
+                Ativar outro pedido
+              </button>
+            </div>
+          </div>
+        )}
+
+        {etapa === 'bloqueado' && (
+          <div className="painel mx-auto max-w-md space-y-6 text-center">
+            <Selo nome="cadeado" />
+            <div>
+              <h1 className="titulo">Cadastro já realizado</h1>
+              <p className="subtitulo leading-relaxed">
+                Já recebemos os dados deste pedido. Por segurança, eles não podem ser alterados por aqui. Para corrigir
+                alguma informação, fale com o nosso suporte.
+              </p>
+            </div>
+            {consulta?.resumo && <ResumoDoCadastro resumo={consulta.resumo} />}
+            <div className="space-y-3">
+              <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" destaque />
+              <button type="button" onClick={voltarParaPedidos} className="botao-secundario w-full">
+                Ativar outro pedido
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Linha({ rotulo, valor, forte = false }: { rotulo: string; valor: string; forte?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 text-sm">
+      <dt className={forte ? 'font-medium text-slate-900' : 'font-light text-slate-600'}>{rotulo}</dt>
+      <dd className={forte ? 'font-medium text-slate-900' : 'text-slate-900'}>{valor}</dd>
+    </div>
+  );
+}
+
+/** "Capa" do produto, como a do livro no checkout: um bloco azul com o ícone do chip. */
+function Capa({ tipo, pequena = false }: { tipo: TipoChip; pequena?: boolean }) {
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-marca to-marca-profundo text-white ${
+        pequena ? 'h-12 w-10' : 'h-20 w-16'
+      }`}
+    >
+      <Icone nome={tipo === 'fisico' ? 'chip' : 'esim'} className={pequena ? 'h-5 w-5' : 'h-7 w-7'} />
+    </span>
+  );
+}
+
+function Selo({ nome }: { nome: NomeIcone }) {
+  return (
+    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-marca-claro">
+      <Icone nome={nome} className="h-7 w-7 text-marca" />
     </div>
   );
 }
@@ -660,23 +694,21 @@ function ResumoDoCadastro({ resumo }: { resumo: ResumoCadastro }) {
   const linhas = [
     { rotulo: 'Plano', valor: resumo.plano },
     { rotulo: 'Destino', valor: resumo.destino },
-    { rotulo: 'Franquia', valor: resumo.franquia },
+    { rotulo: 'Internet', valor: resumo.franquia },
     { rotulo: 'Período', valor: resumo.dias ? `${resumo.dias} dias` : null },
-    { rotulo: 'Data de ativação', valor: resumo.ativacao ? formatarDataBR(resumo.ativacao) : null },
+    { rotulo: 'Ativação', valor: resumo.ativacao ? formatarDataBR(resumo.ativacao) : null },
     { rotulo: 'Válido até', valor: resumo.fim ? formatarDataBR(resumo.fim) : null },
     { rotulo: 'Países', valor: resumo.paises.length ? resumo.paises.join(', ') : null },
   ].filter((l): l is { rotulo: string; valor: string } => !!l.valor);
   if (linhas.length === 0) return null;
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 text-left">
-      <p className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
-        Resumo do cadastro
-      </p>
-      <dl className="divide-y divide-slate-100">
+    <div className="resumo !p-5 text-left">
+      <p className="mb-4 text-base font-light text-slate-900">Resumo do cadastro</p>
+      <dl className="space-y-2.5">
         {linhas.map((l) => (
-          <div key={l.rotulo} className="flex gap-4 px-4 py-2.5 text-sm">
-            <dt className="w-32 shrink-0 text-slate-500">{l.rotulo}</dt>
-            <dd className="font-medium text-slate-900">{l.valor}</dd>
+          <div key={l.rotulo} className="flex gap-4 text-sm">
+            <dt className="w-24 shrink-0 font-light text-slate-500">{l.rotulo}</dt>
+            <dd className="text-slate-900">{l.valor}</dd>
           </div>
         ))}
       </dl>
@@ -686,7 +718,7 @@ function ResumoDoCadastro({ resumo }: { resumo: ResumoCadastro }) {
 
 function BotaoSuporte({ link, texto, destaque = false }: { link: string | null; texto: string; destaque?: boolean }) {
   if (!link) {
-    return <p className="text-sm text-slate-500">Fale com o nosso suporte pelo WhatsApp.</p>;
+    return <p className="text-sm font-light text-slate-500">Fale com o nosso suporte pelo WhatsApp.</p>;
   }
   return (
     <a
@@ -695,8 +727,8 @@ function BotaoSuporte({ link, texto, destaque = false }: { link: string | null; 
       rel="noopener noreferrer"
       className={
         destaque
-          ? 'inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 text-[15px] font-semibold text-white shadow-sm shadow-[#25D366]/30 transition hover:bg-[#1ebe5a]'
-          : 'inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#25D366]/40 bg-white px-4 text-[15px] font-medium text-[#128C7E] transition hover:bg-[#25D366]/5'
+          ? 'inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#25D366] px-4 text-[15px] text-white transition hover:bg-[#1ebe5a]'
+          : 'inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-[#25D366]/50 bg-white px-4 text-[15px] font-light text-[#128C7E] transition hover:bg-[#25D366]/5'
       }
     >
       <IconeWhatsApp className="h-5 w-5" />
@@ -713,30 +745,6 @@ function IconeWhatsApp({ className }: { className?: string }) {
   );
 }
 
-function CartaoPlano({ plano }: { plano: PlanoComprado }) {
-  const itens = [
-    plano.destino && { rotulo: 'Destino', valor: plano.destino },
-    plano.dias && { rotulo: 'Período', valor: `${plano.dias} dias` },
-    plano.franquia && { rotulo: 'Internet', valor: plano.franquia },
-  ].filter(Boolean) as { rotulo: string; valor: string }[];
-  return (
-    <div className="bg-gradient-to-br from-marca to-marca-profundo p-5 text-white sm:p-6">
-      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-white/60">Seu plano</p>
-      <p className="mt-1.5 text-[15px] font-medium leading-snug">{plano.titulo}</p>
-      {itens.length > 0 && (
-        <dl className="mt-4 grid grid-cols-3 gap-2">
-          {itens.map((i) => (
-            <div key={i.rotulo} className="rounded-xl bg-white/10 px-3 py-2.5 ring-1 ring-inset ring-white/15">
-              <dt className="text-[11px] font-medium uppercase tracking-wide text-white/60">{i.rotulo}</dt>
-              <dd className="mt-0.5 text-sm font-semibold">{i.valor}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-    </div>
-  );
-}
-
 function Passos({ etapa }: { etapa: Etapa }) {
   const itens: { chave: Etapa; texto: string }[] = [
     { chave: 'cpf', texto: 'Cadastro' },
@@ -746,13 +754,20 @@ function Passos({ etapa }: { etapa: Etapa }) {
   ];
   const atual = etapa === 'bloqueado' ? itens.length - 1 : itens.findIndex((i) => i.chave === etapa);
   return (
-    <ol className="grid grid-cols-4 gap-2">
+    <ol className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-sm font-light sm:gap-x-4 sm:text-[17px]">
       {itens.map((item, i) => (
-        <li key={item.chave} className="space-y-2">
-          <span className={`block h-1 rounded-full ${i <= atual ? 'bg-marca' : 'bg-slate-200'}`} />
-          <span className={`block text-xs font-medium ${i === atual ? 'text-marca' : i < atual ? 'text-slate-700' : 'text-slate-400'}`}>
-            {i + 1}. {item.texto}
+        <li key={item.chave} className="flex items-center gap-2.5 sm:gap-4">
+          <span
+            aria-current={i === atual ? 'step' : undefined}
+            className={i === atual ? 'font-normal text-slate-900' : i < atual ? 'text-slate-500' : 'text-slate-300'}
+          >
+            {item.texto}
           </span>
+          {i < itens.length - 1 && (
+            <svg viewBox="0 0 28 10" className="h-2.5 w-6 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true">
+              <path d="M1 5h25M22 1.5 26 5l-4 3.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </li>
       ))}
     </ol>

@@ -9,15 +9,16 @@ export default {
       },
       colors: {
         marca: {
-          DEFAULT: '#2563eb',
-          escuro: '#1d4ed8',
-          profundo: '#1e3a8a',
-          claro: '#eff6ff',
-          borda: '#bfdbfe',
+          DEFAULT: '#4646e6',
+          escuro: '#3535c9',
+          profundo: '#2c2b8a',
+          claro: '#eff0fd',
+          borda: '#cfd2f8',
         },
+        fundo: '#3a3a9e',
       },
       boxShadow: {
-        cartao: '0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12)',
+        cartao: '0 30px 60px -30px rgba(12, 12, 60, 0.45)',
       },
     },
   },
