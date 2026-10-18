@@ -14,7 +14,7 @@ export const MSG_ICCID = 'ICCID inválido. Confira o número impresso no cartão
 
 const cpf = z.string().refine(cpfValido, 'CPF inválido').transform(soDigitos);
 
-/** O pedido escolhido na lista: PK de `mercado_livre_orders` e o item (quando há). */
+/** O pedido escolhido na lista: PK de `mercado_livre_orders`. */
 const pedidoId = z.string().trim().regex(/^\d{1,20}$/, 'Selecione um pedido');
 const itemId = z.preprocess((v) => (v === '' || v === undefined ? null : v), z.number().int().positive().nullable());
 
@@ -22,18 +22,34 @@ const itemId = z.preprocess((v) => (v === '' || v === undefined ? null : v), z.n
 export const pedidosSchema = z.object({ cpf });
 
 /** Passo 2: o pedido escolhido. O servidor confere de novo que ele é deste CPF. */
-export const consultaSchema = z.object({ cpf, pedido_id: pedidoId, item_id: itemId });
+export const consultaSchema = z.object({ cpf, pedido_id: pedidoId });
 
 /**
- * O formulário, validado igual no navegador e no servidor.
+ * Um chip do pedido: o item (anúncio) e a posição dele dentro do item — um item com
+ * quantidade 3 tem os chips 1, 2 e 3. Data de ativação e países são de cada chip.
+ */
+export const chipSchema = z.object({
+  item_id: itemId,
+  posicao: z.number().int().min(1).max(50),
+  /** Chip físico cujo ICCID ainda não foi lançado no pedido: o cliente digita. */
+  iccid: opcional(z.string().trim().refine(iccidValido, MSG_ICCID)),
+  travel_start: z.string().min(1, 'Informe a data de ativação').pipe(dataIso),
+  countries: z
+    .array(z.string().trim().min(1).max(80))
+    .min(1, 'Selecione os países que vai visitar')
+    .max(80)
+    .transform((l) => [...new Set(l)]),
+});
+
+/**
+ * O formulário, validado igual no navegador e no servidor. Os dados pessoais são um só
+ * titular para todos os chips do pedido.
  * O servidor NÃO confia no navegador: tudo é revalidado em /api/cadastro; o tipo de chip,
  * o plano e os países permitidos são lidos de novo do pedido.
  */
 export const cadastroSchema = z.object({
   pedido_id: pedidoId,
-  item_id: itemId,
-  /** Chip físico cujo ICCID ainda não foi lançado no pedido: o cliente digita. */
-  iccid: opcional(z.string().trim().refine(iccidValido, MSG_ICCID)),
+  chips: z.array(chipSchema).min(1, 'Nenhum chip para cadastrar').max(50),
   full_name: z
     .string()
     .trim()
@@ -52,34 +68,30 @@ export const cadastroSchema = z.object({
     .string()
     .refine((s) => normalizarTelefone(s) !== null, 'Telefone inválido — use DDD + número')
     .transform((s) => normalizarTelefone(s) as string),
-  travel_start: z.string().min(1, 'Informe a data de ativação').pipe(dataIso),
-  countries: z
-    .array(z.string().trim().min(1).max(80))
-    .min(1, 'Selecione os países que vai visitar')
-    .max(80)
-    .transform((l) => [...new Set(l)]),
   observation: opcional(z.string().trim().max(1000)),
   lgpd: z.literal(true, { errorMap: () => ({ message: 'É preciso aceitar o uso dos dados para a ativação' }) }),
   // Campo-armadilha para robôs: fica escondido na tela e precisa chegar vazio.
   website: opcional(z.string().max(0, 'Envio inválido')),
 });
 
+/** Chave do erro de um campo: "email", ou "chips.1.countries" para o campo de um chip. */
+export const chaveDoCampo = (path: (string | number)[]): string =>
+  path[0] === 'chips' && path.length >= 3 ? `chips.${path[1]}.${path[2]}` : String(path[0] ?? '_');
+
 export type PedidosDados = z.output<typeof pedidosSchema>;
-export type ConsultaEntrada = z.input<typeof consultaSchema>;
 export type ConsultaDados = z.output<typeof consultaSchema>;
 export type CadastroEntrada = z.input<typeof cadastroSchema>;
 export type Cadastro = z.output<typeof cadastroSchema>;
+export type ChipCadastro = z.output<typeof chipSchema>;
 
 export type TipoChip = 'fisico' | 'virtual';
 
-/** Dados já conhecidos do titular e da ativação, para preencher o formulário. */
+/** Dados já conhecidos do titular, para preencher o formulário (valem para todos os chips). */
 export interface Preenchimento {
   full_name: string;
   email: string;
   phone: string;
   birth_date: string;
-  travel_start: string;
-  countries: string[];
 }
 
 /** O que já foi cadastrado, para mostrar quando o cadastro está travado. */
@@ -93,14 +105,16 @@ export interface ResumoCadastro {
   fim: string | null;
 }
 
-/** Um pedido do CPF ainda sem data de ativação — uma linha da lista do passo 1. */
+/** Um pedido do CPF com chips ainda sem data de ativação — uma linha da lista do passo 1. */
 export interface PedidoPendente {
   pedido_id: string;
-  item_id: number | null;
   /** Últimos dígitos do número do pedido, para o cliente reconhecer a compra. */
   pedidoFinal: string;
   titulo: string;
-  tipo: TipoChip;
+  /** Tipos dos chips pendentes (um pedido pode ter físico e eSIM). */
+  tipos: TipoChip[];
+  /** Quantos chips do pedido ainda faltam ativar. */
+  chips: number;
   /** Data da compra (aaaa-mm-dd). */
   compradoEm: string | null;
   destino: string | null;
@@ -115,20 +129,32 @@ export interface ListaPedidos {
   pedidos: PedidoPendente[];
 }
 
-/** Resposta de POST /api/consulta. */
-export interface Consulta {
+/** Um chip pendente do pedido, com o plano dele. */
+export interface ChipConsulta {
+  item_id: number | null;
+  posicao: number;
   tipo: TipoChip;
   /** ICCID do chip físico já lançado no pedido. Nulo no físico = o cliente digita. */
   iccid: string | null;
-  /** Últimos dígitos do número do pedido, para o cliente reconhecer a compra. */
-  pedidoFinal: string | null;
-  /** O plano comprado. Nulo quando o pedido não foi localizado. */
   plano: PlanoComprado | null;
-  /** Dados do pedido (ou do envio que parou no meio) para preencher o formulário. */
-  preenchimento: Preenchimento | null;
-  /** Já existe cadastro ativo (envio incompleto) para este pedido. */
+  /** Data e países já conhecidos deste chip (envio que parou no meio ou o próprio pedido). */
+  travel_start: string;
+  countries: string[];
+  /** Já existe cadastro ativo (envio incompleto) para este chip. */
   jaCadastrado: boolean;
-  /** Já existe cadastro enviado para este chip/pedido; não aceita mais alteração. */
+}
+
+/** Resposta de POST /api/consulta. */
+export interface Consulta {
+  /** Últimos dígitos do número do pedido, para o cliente reconhecer a compra. */
+  pedidoFinal: string;
+  /** Chips do pedido que ainda faltam cadastrar. Vazio quando o pedido está travado. */
+  chips: ChipConsulta[];
+  /** Chips deste pedido já cadastrados (não entram no formulário). */
+  jaEnviados: number;
+  /** Dados do titular para preencher o formulário. */
+  preenchimento: Preenchimento | null;
+  /** Todos os chips do pedido já têm cadastro enviado; não aceita mais alteração. */
   bloqueado: boolean;
   /** Resumo do cadastro travado. */
   resumo: ResumoCadastro | null;

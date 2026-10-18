@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { cadastroSchema } from '@/lib/cadastro-schema';
+import { cadastroSchema, chaveDoCampo } from '@/lib/cadastro-schema';
 import { CadastroBloqueadoError, CampoInvalidoError, PedidoIndisponivelError, registrarCadastro } from '@/lib/pedido-central';
 import { dentroDoLimite, ipDaRequisicao } from '@/lib/limite';
 
@@ -22,10 +22,7 @@ export async function POST(request: Request) {
   const validado = cadastroSchema.safeParse(corpo);
   if (!validado.success) {
     const campos: Record<string, string> = {};
-    for (const issue of validado.error.issues) {
-      const campo = String(issue.path[0] ?? '_');
-      campos[campo] ??= issue.message;
-    }
+    for (const issue of validado.error.issues) campos[chaveDoCampo(issue.path)] ??= issue.message;
     return NextResponse.json({ error: 'Confira os campos destacados.', campos }, { status: 422 });
   }
 

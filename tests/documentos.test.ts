@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chaveIccid, cpfValido, formatarCpf, iccidValido, mascararCpf, normalizarTelefone } from '@/lib/documentos';
-import { cadastroSchema, consultaSchema, pedidosSchema } from '@/lib/cadastro-schema';
+import { cadastroSchema, chaveDoCampo, consultaSchema, pedidosSchema } from '@/lib/cadastro-schema';
 
 describe('ICCID', () => {
   it('normaliza espaços e caixa como o Pedido Central', () => {
@@ -38,55 +38,63 @@ describe('telefone', () => {
 });
 
 describe('cadastroSchema', () => {
+  const chip = { item_id: 678, posicao: 1, iccid: '', travel_start: '2026-10-10', countries: ['Estados Unidos'] };
   const valido = {
     pedido_id: '12345',
-    item_id: 678,
-    iccid: '',
+    chips: [chip],
     full_name: 'Maria da Silva',
     cpf: '529.982.247-25',
     birth_date: '1990-05-10',
     email: ' Maria@Exemplo.com ',
     phone: '(11) 91234-5678',
-    travel_start: '2026-10-10',
-    countries: ['Estados Unidos'],
     observation: '',
     lgpd: true,
     website: '',
   };
+  const campos = (r: { success: boolean; error?: { issues: { path: (string | number)[] }[] } }) =>
+    r.success ? [] : r.error!.issues.map((i) => chaveDoCampo(i.path));
 
   it('aceita e normaliza um envio válido', () => {
     const r = cadastroSchema.parse(valido);
     expect(r.cpf).toBe('52998224725');
     expect(r.phone).toBe('5511912345678');
     expect(r.email).toBe('maria@exemplo.com');
-    expect(r.iccid).toBeUndefined();
-    expect(r.item_id).toBe(678);
-    expect(r.countries).toEqual(['Estados Unidos']);
+    expect(r.chips[0].iccid).toBeUndefined();
+    expect(r.chips[0].item_id).toBe(678);
+    expect(r.chips[0].countries).toEqual(['Estados Unidos']);
   });
 
-  it('exige data de ativação e ao menos um país', () => {
-    const r = cadastroSchema.safeParse({ ...valido, travel_start: '', countries: [] });
-    const campos = r.success ? [] : r.error.issues.map((i) => i.path[0]);
-    expect(campos).toEqual(expect.arrayContaining(['travel_start', 'countries']));
+  it('um titular para vários chips, cada chip com a sua data e os seus países', () => {
+    const r = cadastroSchema.parse({
+      ...valido,
+      chips: [chip, { ...chip, posicao: 2, travel_start: '2026-11-01', countries: ['França', 'França'] }],
+    });
+    expect(r.chips.map((c) => [c.posicao, c.travel_start, c.countries])).toEqual([
+      [1, '2026-10-10', ['Estados Unidos']],
+      [2, '2026-11-01', ['França']],
+    ]);
   });
 
-  it('exige o pedido escolhido; item é opcional', () => {
-    const semPedido = cadastroSchema.safeParse({ ...valido, pedido_id: '' });
-    expect(semPedido.success ? [] : semPedido.error.issues.map((i) => i.path[0])).toEqual(['pedido_id']);
-    expect(cadastroSchema.parse({ ...valido, item_id: null }).item_id).toBeNull();
+  it('aponta o chip do erro: data e países de cada um', () => {
+    const r = cadastroSchema.safeParse({ ...valido, chips: [chip, { ...chip, posicao: 2, travel_start: '', countries: [] }] });
+    expect(campos(r)).toEqual(expect.arrayContaining(['chips.1.travel_start', 'chips.1.countries']));
+  });
+
+  it('exige o pedido escolhido e ao menos um chip; item é opcional', () => {
+    expect(campos(cadastroSchema.safeParse({ ...valido, pedido_id: '' }))).toEqual(['pedido_id']);
+    expect(campos(cadastroSchema.safeParse({ ...valido, chips: [] }))).toEqual(['chips']);
+    expect(cadastroSchema.parse({ ...valido, chips: [{ ...chip, item_id: null }] }).chips[0].item_id).toBeNull();
   });
 
   it('ICCID digitado precisa ser válido', () => {
-    expect(cadastroSchema.safeParse({ ...valido, iccid: '8955 0123 4567 8901 234' }).success).toBe(true);
-    const r = cadastroSchema.safeParse({ ...valido, iccid: '1234' });
-    expect(r.success ? [] : r.error.issues.map((i) => i.path[0])).toEqual(['iccid']);
+    expect(cadastroSchema.safeParse({ ...valido, chips: [{ ...chip, iccid: '8955 0123 4567 8901 234' }] }).success).toBe(true);
+    expect(campos(cadastroSchema.safeParse({ ...valido, chips: [{ ...chip, iccid: '1234' }] }))).toEqual(['chips.0.iccid']);
   });
 
   it('exige consentimento, nome completo e CPF válido', () => {
     const r = cadastroSchema.safeParse({ ...valido, lgpd: false, full_name: 'Maria', cpf: '000' });
     expect(r.success).toBe(false);
-    const campos = r.success ? [] : r.error.issues.map((i) => i.path[0]);
-    expect(campos).toEqual(expect.arrayContaining(['lgpd', 'full_name', 'cpf']));
+    expect(campos(r)).toEqual(expect.arrayContaining(['lgpd', 'full_name', 'cpf']));
   });
 
   it('recusa quando a armadilha de robô vem preenchida', () => {
@@ -100,7 +108,7 @@ describe('pedidosSchema e consultaSchema', () => {
     expect(pedidosSchema.safeParse({ cpf: '123' }).success).toBe(false);
   });
   it('passo 2 pede o CPF e o pedido escolhido', () => {
-    expect(consultaSchema.safeParse({ cpf: '52998224725', pedido_id: '12345', item_id: 9 }).success).toBe(true);
+    expect(consultaSchema.safeParse({ cpf: '52998224725', pedido_id: '12345' }).success).toBe(true);
     const r = consultaSchema.safeParse({ cpf: '52998224725', pedido_id: 'abc' });
     expect(r.success ? [] : r.error.issues.map((i) => i.path[0])).toEqual(['pedido_id']);
   });

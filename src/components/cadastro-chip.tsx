@@ -2,44 +2,58 @@
 
 import { useMemo, useState } from 'react';
 import {
-  cadastroSchema, pedidosSchema, type Consulta, type PedidoPendente, type ResumoCadastro, type TipoChip,
+  cadastroSchema, chaveDoCampo, pedidosSchema,
+  type ChipConsulta, type Consulta, type PedidoPendente, type ResumoCadastro, type TipoChip,
 } from '@/lib/cadastro-schema';
 import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
 import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista } from '@/lib/plano';
 
 type Etapa = 'cpf' | 'pedidos' | 'formulario' | 'concluido' | 'bloqueado';
 
+/** Data de ativação e países de um chip (ou de todos, com "mesmos dados"). */
+interface Ativacao {
+  travel_start: string;
+  countries: string[];
+  /** Países digitados à mão, quando a cobertura do plano não é conhecida. */
+  countries_texto: string;
+}
+
 interface Formulario {
   full_name: string;
   birth_date: string;
   email: string;
   phone: string;
-  /** Chip físico sem ICCID lançado no pedido: o cliente digita. */
-  iccid: string;
-  travel_start: string;
-  countries: string[];
-  /** Países digitados à mão, quando a cobertura do plano não é conhecida. */
-  countries_texto: string;
   observation: string;
   lgpd: boolean;
   website: string;
+  /** Mesma data de ativação e mesmos países para todos os chips do pedido. */
+  mesmos: boolean;
+  comum: Ativacao;
+  /** Uma por chip, na ordem de `consulta.chips`. */
+  chips: Ativacao[];
+  /** ICCID digitado de cada chip físico que a equipe ainda não lançou no pedido. */
+  iccids: string[];
 }
+
+const ATIVACAO_VAZIA: Ativacao = { travel_start: '', countries: [], countries_texto: '' };
 
 const VAZIO: Formulario = {
   full_name: '',
   birth_date: '',
   email: '',
   phone: '',
-  iccid: '',
-  travel_start: '',
-  countries: [],
-  countries_texto: '',
   observation: '',
   lgpd: false,
   website: '',
+  mesmos: true,
+  comum: ATIVACAO_VAZIA,
+  chips: [],
+  iccids: [],
 };
 
 const TIPO_TEXTO: Record<TipoChip, string> = { fisico: 'Chip físico', virtual: 'eSIM' };
+
+const CAMPOS_DE_ATIVACAO = ['travel_start', 'countries'];
 
 const hojeIso = () => {
   const d = new Date();
@@ -48,7 +62,7 @@ const hojeIso = () => {
 
 function lerCampos(issues: { path: (string | number)[]; message: string }[]) {
   const campos: Record<string, string> = {};
-  for (const issue of issues) campos[String(issue.path[0] ?? '_')] ??= issue.message;
+  for (const issue of issues) campos[chaveDoCampo(issue.path)] ??= issue.message;
   return campos;
 }
 
@@ -58,6 +72,36 @@ function linkSuporte(numero: string, texto: string): string | null {
   return n ? `https://wa.me/${n}?text=${encodeURIComponent(texto)}` : null;
 }
 
+/**
+ * Países que todos os chips cobrem, para a escolha única com "mesmos dados". Plano de
+ * cobertura desconhecida não restringe; se nenhum plano tem cobertura, o cliente digita.
+ */
+function coberturaComum(chips: ChipConsulta[]): string[] {
+  const conhecidas = chips.map((c) => c.plano?.paises ?? []).filter((l) => l.length > 0);
+  if (conhecidas.length === 0) return [];
+  return conhecidas.reduce((acc, lista) => {
+    const chaves = new Set(lista.map(chaveTexto));
+    return acc.filter((p) => chaves.has(chaveTexto(p)));
+  });
+}
+
+/**
+ * Os países escolhidos que cabem numa cobertura (vazia = qualquer um). Cobertura de um
+ * país só já vem escolhida: a tela mostra esse país como incluído, sem botão para marcar.
+ */
+const naCobertura = (paises: string[], cobertura: string[]) => {
+  if (cobertura.length === 0) return paises;
+  if (cobertura.length === 1) return cobertura;
+  const chaves = new Set(paises.map(chaveTexto));
+  return cobertura.filter((p) => chaves.has(chaveTexto(p)));
+};
+
+const nomeDoChip = (chip: ChipConsulta, i: number, total: number) =>
+  total > 1 ? `Chip ${i + 1} · ${TIPO_TEXTO[chip.tipo]}` : TIPO_TEXTO[chip.tipo];
+
+const textoDosChips = (n: number, tipos: TipoChip[]) =>
+  `${n > 1 ? `${n} chips` : TIPO_TEXTO[tipos[0] ?? 'fisico']}${n > 1 ? ` · ${tipos.map((t) => TIPO_TEXTO[t]).join(' e ')}` : ''}`;
+
 export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   const [etapa, setEtapa] = useState<Etapa>('cpf');
   const [cpf, setCpf] = useState('');
@@ -65,13 +109,11 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   const [escolhido, setEscolhido] = useState<PedidoPendente | null>(null);
   const [consulta, setConsulta] = useState<Consulta | null>(null);
   const [form, setForm] = useState<Formulario>(VAZIO);
-  const [filtroPais, setFiltroPais] = useState('');
   const [erros, setErros] = useState<Record<string, string>>({});
   const [erroGeral, setErroGeral] = useState<string | null>(null);
   const [carregando, setCarregando] = useState<string | null>(null);
-  const [resultado, setResultado] = useState<{ vinculadoAoPedido: boolean; vigenciaFim: string | null } | null>(null);
+  const [resultado, setResultado] = useState<{ chips: { tipo: TipoChip; travel_start: string; vigenciaFim: string | null }[] } | null>(null);
 
-  const tipo: TipoChip = consulta?.tipo ?? escolhido?.tipo ?? 'fisico';
   const suporte = linkSuporte(
     whatsappSuporte,
     escolhido
@@ -79,19 +121,62 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
       : 'Olá! Não encontrei o meu pedido para ativar no GoChip.',
   );
 
-  const plano = consulta?.plano ?? null;
-  const cobertura = plano?.paises ?? [];
-  /** Chip físico cujo ICCID a equipe ainda não lançou no pedido. */
-  const pedeIccid = tipo === 'fisico' && !!consulta && !consulta.iccid;
+  const chips = consulta?.chips ?? [];
+  const varios = chips.length > 1;
+  const comum = useMemo(() => coberturaComum(chips), [chips]);
+  /** Os chips usam a ativação comum: um chip só, ou vários com "mesmos dados" marcado. */
+  const usaComum = !varios || form.mesmos;
 
   const alterar = <K extends keyof Formulario>(campo: K, valor: Formulario[K]) => {
     setForm((f) => ({ ...f, [campo]: valor }));
-    const chave = campo === 'countries_texto' ? 'countries' : campo;
-    setErros(({ [chave]: _, ...resto }) => resto);
+    setErros(({ [campo]: _, ...resto }) => resto);
   };
 
-  function alternarPais(pais: string) {
-    alterar('countries', form.countries.includes(pais) ? form.countries.filter((p) => p !== pais) : [...form.countries, pais]);
+  /** Apaga os erros de um campo de ativação: de todos os chips (comum) ou de um. */
+  function limparErros(campo: string, chip?: number) {
+    setErros((atual) =>
+      Object.fromEntries(
+        Object.entries(atual).filter(([k]) => {
+          const m = k.match(/^chips\.(\d+)\.(.+)$/);
+          return !m || m[2] !== campo || (chip !== undefined && Number(m[1]) !== chip);
+        }),
+      ),
+    );
+  }
+
+  function alterarComum(parte: Partial<Ativacao>) {
+    setForm((f) => ({ ...f, comum: { ...f.comum, ...parte } }));
+    for (const campo of Object.keys(parte)) limparErros(campo === 'countries_texto' ? 'countries' : campo);
+  }
+
+  function alterarChip(i: number, parte: Partial<Ativacao>) {
+    setForm((f) => ({ ...f, chips: f.chips.map((a, j) => (j === i ? { ...a, ...parte } : a)) }));
+    for (const campo of Object.keys(parte)) limparErros(campo === 'countries_texto' ? 'countries' : campo, i);
+  }
+
+  function alterarIccid(i: number, valor: string) {
+    setForm((f) => ({ ...f, iccids: f.iccids.map((v, j) => (j === i ? valor : v)) }));
+    limparErros('iccid', i);
+  }
+
+  /** Marca/desmarca "mesmos dados": os dados de um lado passam para o outro. */
+  function alternarMesmos(mesmos: boolean) {
+    setForm((f) =>
+      mesmos
+        ? { ...f, mesmos, comum: { ...f.chips[0], countries: naCobertura(f.chips[0]?.countries ?? [], comum) } }
+        : {
+            ...f,
+            mesmos,
+            chips: chips.map((c) => ({ ...f.comum, countries: naCobertura(f.comum.countries, c.plano?.paises ?? []) })),
+          },
+    );
+    setErros((atual) => Object.fromEntries(Object.entries(atual).filter(([k]) => !CAMPOS_DE_ATIVACAO.some((c) => k.endsWith(`.${c}`)))));
+  }
+
+  /** Erro de um campo de ativação: o do chip ou, na ativação comum, o primeiro de qualquer chip. */
+  function erroAtivacao(campo: string, chip?: number): string | undefined {
+    if (chip !== undefined) return erros[`chips.${chip}.${campo}`];
+    return chips.map((_, i) => erros[`chips.${i}.${campo}`]).find(Boolean);
   }
 
   async function postar(url: string, corpo: unknown) {
@@ -131,9 +216,9 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   async function escolherPedido(p: PedidoPendente) {
     setErroGeral(null);
     setEscolhido(p);
-    setCarregando(`${p.pedido_id}:${p.item_id ?? ''}`);
+    setCarregando(p.pedido_id);
     try {
-      const { res, dados } = await postar('/api/consulta', { cpf, pedido_id: p.pedido_id, item_id: p.item_id });
+      const { res, dados } = await postar('/api/consulta', { cpf, pedido_id: p.pedido_id });
       if (!res.ok) throw new Error(dados.error || 'Falha na consulta');
       const c = dados as Consulta;
       setConsulta(c);
@@ -142,12 +227,26 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
         return;
       }
       const pre = c.preenchimento;
+      const porChip: Ativacao[] = c.chips.map((chip) => ({
+        travel_start: chip.travel_start,
+        countries: naCobertura(chip.countries, chip.plano?.paises ?? []),
+        countries_texto: '',
+      }));
+      // Só abre com cada chip separado quando um envio anterior gravou datas ou países
+      // diferentes entre os chips; senão "mesmos dados" vem marcado.
+      const anteriores = porChip.filter((_, i) => c.chips[i].jaCadastrado);
+      const iguais = anteriores.every(
+        (a) => a.travel_start === anteriores[0].travel_start && a.countries.join('|') === anteriores[0].countries.join('|'),
+      );
+      const base = anteriores[0] ?? porChip[0];
       setForm({
         ...VAZIO,
-        ...(pre ? { full_name: pre.full_name, email: pre.email, phone: pre.phone, birth_date: pre.birth_date, travel_start: pre.travel_start } : {}),
-        countries: pre?.countries.length ? pre.countries : c.plano?.paises.length === 1 ? c.plano.paises : [],
+        ...(pre ? { full_name: pre.full_name, email: pre.email, phone: pre.phone, birth_date: pre.birth_date } : {}),
+        mesmos: iguais,
+        comum: { ...base, countries: naCobertura(base?.countries ?? [], coberturaComum(c.chips)) },
+        chips: porChip,
+        iccids: c.chips.map(() => ''),
       });
-      setFiltroPais('');
       setErros({});
       setEtapa('formulario');
     } catch (err) {
@@ -160,24 +259,31 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     setErroGeral(null);
-    const { countries_texto, countries, iccid, ...resto } = form;
+    const { comum: ativacaoComum, chips: porChip, iccids, mesmos: _, ...resto } = form;
     const corpo = {
       ...resto,
       pedido_id: escolhido?.pedido_id,
-      item_id: escolhido?.item_id ?? null,
-      iccid: pedeIccid ? chaveIccid(iccid) : undefined,
       cpf,
-      countries: cobertura.length ? countries : paisesDaLista(countries_texto),
+      chips: chips.map((chip, i) => {
+        const a = usaComum ? ativacaoComum : porChip[i];
+        const cobertura = usaComum ? comum : chip.plano?.paises ?? [];
+        return {
+          item_id: chip.item_id,
+          posicao: chip.posicao,
+          iccid: chip.tipo === 'fisico' && !chip.iccid ? chaveIccid(iccids[i]) || undefined : undefined,
+          travel_start: a.travel_start,
+          countries: cobertura.length ? a.countries : paisesDaLista(a.countries_texto),
+        };
+      }),
     };
-    if (pedeIccid && !iccid.trim()) {
-      setErros({ iccid: 'Informe o número do chip (ICCID)' });
-      setErroGeral('Confira os campos destacados.');
-      return;
-    }
 
     const local = cadastroSchema.safeParse(corpo);
-    if (!local.success) {
-      setErros(lerCampos(local.error.issues));
+    const campos = local.success ? {} : lerCampos(local.error.issues);
+    chips.forEach((chip, i) => {
+      if (chip.tipo === 'fisico' && !chip.iccid && !iccids[i].trim()) campos[`chips.${i}.iccid`] = 'Informe o número do chip (ICCID)';
+    });
+    if (Object.keys(campos).length) {
+      setErros(campos);
       setErroGeral('Confira os campos destacados.');
       return;
     }
@@ -193,7 +299,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
         if (dados.campos) setErros(dados.campos);
         throw new Error(dados.error || 'Falha ao enviar');
       }
-      setResultado({ vinculadoAoPedido: dados.vinculadoAoPedido, vigenciaFim: dados.vigenciaFim });
+      setResultado({ chips: dados.chips });
       setEtapa('concluido');
     } catch (err) {
       setErroGeral((err as Error).message);
@@ -234,15 +340,12 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
     setResultado(null);
   }
 
-  const vigenciaFim = fimDaVigencia(form.travel_start, plano?.dias);
-  const paisesVisiveis = useMemo(() => {
-    const f = chaveTexto(filtroPais);
-    return f ? cobertura.filter((p) => chaveTexto(p).includes(f)) : cobertura;
-  }, [cobertura, filtroPais]);
+  /** A ativação que vale para o chip `i` na tela. */
+  const ativacaoDo = (i: number) => (usaComum ? form.comum : form.chips[i] ?? ATIVACAO_VAZIA);
+  const pedemIccid = chips.map((c, i) => ({ chip: c, i })).filter(({ chip }) => chip.tipo === 'fisico' && !chip.iccid);
 
   const classeCampo = (campo: string) => `campo ${erros[campo] ? 'campo-erro' : ''}`;
-  const Erro = ({ campo }: { campo: string }) =>
-    erros[campo] ? <p className="mt-1.5 text-xs text-red-600">{erros[campo]}</p> : null;
+  const Erro = ({ campo }: { campo: string }) => <ErroTexto texto={erros[campo]} />;
 
   return (
     <div className="cartao px-4 py-7 sm:px-10 sm:py-10">
@@ -301,7 +404,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
             {pedidos.length > 0 ? (
               <ul className="resumo space-y-3 !p-3 sm:!p-4">
                 {pedidos.map((p) => {
-                  const chave = `${p.pedido_id}:${p.item_id ?? ''}`;
+                  const chave = p.pedido_id;
                   const detalhes = [p.destino, p.dias && `${p.dias} dias`, p.franquia].filter(Boolean).join(' · ');
                   return (
                     <li key={chave}>
@@ -311,10 +414,11 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
                         disabled={!!carregando}
                         className="flex w-full items-center gap-4 rounded-xl bg-white p-4 text-left ring-1 ring-transparent transition hover:ring-marca disabled:opacity-60"
                       >
-                        <Capa tipo={p.tipo} pequena />
+                        <Capa tipo={p.tipos[0] ?? 'fisico'} pequena quantidade={p.chips} />
                         <span className="min-w-0 flex-1">
                           <span className="block text-[15px] text-slate-900">
-                            {TIPO_TEXTO[p.tipo]} <span className="text-xs font-light text-slate-400">· final {p.pedidoFinal}</span>
+                            {textoDosChips(p.chips, p.tipos)}{' '}
+                            <span className="text-xs font-light text-slate-400">· final {p.pedidoFinal}</span>
                           </span>
                           <span className="mt-0.5 block truncate text-sm font-light text-slate-500">{detalhes || p.titulo}</span>
                           <span className="mt-1 block text-xs font-light text-slate-400">
@@ -358,25 +462,9 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
                     {consulta.preenchimento?.full_name
                       ? 'Preenchemos com os dados da compra. Confira e corrija se preciso.'
                       : 'Preencha com os dados de quem vai usar o chip.'}
+                    {varios && ' Valem para todos os chips do pedido.'}
                   </p>
                 </div>
-
-                {pedeIccid && (
-                  <div className="grupo">
-                    <label htmlFor="iccid" className="rotulo">Número do chip (ICCID)</label>
-                    <input
-                      id="iccid"
-                      inputMode="numeric"
-                      autoComplete="off"
-                      placeholder="8955 0000 0000 0000 000"
-                      className={`${classeCampo('iccid')} font-mono tracking-wider`}
-                      value={form.iccid}
-                      onChange={(e) => alterar('iccid', e.target.value)}
-                    />
-                    <p className="ajuda">Impresso no cartão do chip, abaixo do código de barras.</p>
-                    <Erro campo="iccid" />
-                  </div>
-                )}
 
                 <div className="grupo">
                   <label htmlFor="full_name" className="rotulo">Nome completo</label>
@@ -438,96 +526,87 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
                 </div>
               </section>
 
+              {pedemIccid.length > 0 && (
+                <section className="space-y-7">
+                  <div>
+                    <h2 className="titulo">{pedemIccid.length > 1 ? 'Números dos chips' : 'Número do chip'}</h2>
+                    <p className="subtitulo">O ICCID vem impresso no cartão do chip, abaixo do código de barras.</p>
+                  </div>
+                  {pedemIccid.map(({ chip, i }) => (
+                    <div key={i} className="grupo">
+                      <label htmlFor={`iccid-${i}`} className="rotulo">
+                        {varios ? `ICCID do ${nomeDoChip(chip, i, chips.length).toLowerCase()}` : 'Número do chip (ICCID)'}
+                      </label>
+                      <input
+                        id={`iccid-${i}`}
+                        inputMode="numeric"
+                        autoComplete="off"
+                        placeholder="8955 0000 0000 0000 000"
+                        className={`${classeCampo(`chips.${i}.iccid`)} font-mono tracking-wider`}
+                        value={form.iccids[i] ?? ''}
+                        onChange={(e) => alterarIccid(i, e.target.value)}
+                      />
+                      <Erro campo={`chips.${i}.iccid`} />
+                    </div>
+                  ))}
+                </section>
+              )}
+
               <section className="space-y-7">
                 <div>
                   <h2 className="titulo">Ativação</h2>
                   <p className="subtitulo">Quando o chip deve começar a funcionar e para onde você vai.</p>
                 </div>
 
-                <div className="grupo">
-                  <label htmlFor="travel_start" className="rotulo">Data de ativação</label>
-                  <input
-                    id="travel_start"
-                    type="date"
-                    min={hojeIso()}
-                    className={classeCampo('travel_start')}
-                    value={form.travel_start}
-                    onChange={(e) => alterar('travel_start', e.target.value)}
-                  />
-                  <Erro campo="travel_start" />
-                </div>
-
-                <div className="grupo">
-                  <span className="rotulo">Países que vai visitar</span>
-                  {cobertura.length >= 1 ? (
-                    <div className={`rounded-lg border px-4 pb-4 pt-5 ${erros.countries ? 'border-red-400' : 'border-slate-400/70'}`}>
-                      {cobertura.length === 1 ? (
-                        <div className="flex items-center gap-2 text-sm font-light text-slate-500">
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-marca px-3 py-1.5 text-sm text-white">
-                            <Icone nome="check" className="h-3.5 w-3.5" /> {cobertura[0]}
-                          </span>
-                          incluído no seu plano
-                        </div>
-                      ) : (
-                        <>
-                          <div className="mb-3 flex items-center justify-between gap-2 text-xs font-light text-slate-400">
-                            <span>Seu plano cobre {cobertura.length} países. Toque para marcar.</span>
-                            {form.countries.length > 0 && (
-                              <span className="shrink-0 rounded-full bg-marca-claro px-2 py-0.5 text-marca">
-                                {form.countries.length} selecionado{form.countries.length > 1 ? 's' : ''}
-                              </span>
-                            )}
-                          </div>
-                          {cobertura.length > 8 && (
-                            <div className="relative mb-3">
-                              <Icone nome="busca" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                              <input
-                                type="search"
-                                placeholder="Buscar país"
-                                className="campo h-10 pl-9 text-sm"
-                                value={filtroPais}
-                                onChange={(e) => setFiltroPais(e.target.value)}
-                              />
-                            </div>
-                          )}
-                          <div className="flex max-h-60 flex-wrap gap-2 overflow-y-auto">
-                            {paisesVisiveis.map((p) => {
-                              const marcado = form.countries.includes(p);
-                              return (
-                                <button
-                                  key={p}
-                                  type="button"
-                                  aria-pressed={marcado}
-                                  onClick={() => alternarPais(p)}
-                                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
-                                    marcado
-                                      ? 'border-marca bg-marca text-white'
-                                      : 'border-slate-300 bg-white font-light text-slate-700 hover:border-marca hover:text-marca'
-                                  }`}
-                                >
-                                  {marcado && <Icone nome="check" className="h-3.5 w-3.5" />}
-                                  {p}
-                                </button>
-                              );
-                            })}
-                            {paisesVisiveis.length === 0 && (
-                              <p className="text-sm font-light text-slate-400">Nenhum país com esse nome no seu plano.</p>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ) : (
+                {varios && (
+                  <label className="flex cursor-pointer items-start gap-3 rounded-lg bg-marca-claro px-4 py-3.5 text-sm font-light text-slate-700">
                     <input
-                      id="countries_texto"
-                      placeholder="Ex.: Portugal, Espanha"
-                      className={classeCampo('countries')}
-                      value={form.countries_texto}
-                      onChange={(e) => alterar('countries_texto', e.target.value)}
+                      type="checkbox"
+                      className="caixa mt-px"
+                      checked={form.mesmos}
+                      onChange={(e) => alternarMesmos(e.target.checked)}
                     />
-                  )}
-                  <Erro campo="countries" />
-                </div>
+                    <span>
+                      Usar a <span className="font-normal text-slate-900">mesma data de ativação e os mesmos destinos</span> para
+                      os {chips.length} chips
+                    </span>
+                  </label>
+                )}
+
+                {usaComum ? (
+                  <CamposAtivacao
+                    id="comum"
+                    valor={form.comum}
+                    cobertura={comum}
+                    dias={varios ? null : chips[0]?.plano?.dias ?? null}
+                    erroData={erroAtivacao('travel_start')}
+                    erroPaises={erroAtivacao('countries')}
+                    onChange={alterarComum}
+                  />
+                ) : (
+                  chips.map((chip, i) => (
+                    <div key={i} className="space-y-6 rounded-xl border border-slate-200 px-4 pb-5 pt-4 sm:px-5">
+                      <div className="flex items-center gap-3">
+                        <Capa tipo={chip.tipo} pequena />
+                        <div className="min-w-0">
+                          <p className="text-[15px] text-slate-900">{nomeDoChip(chip, i, chips.length)}</p>
+                          <p className="truncate text-xs font-light text-slate-500">
+                            {[chip.plano?.destino, chip.plano?.dias && `${chip.plano.dias} dias`, chip.plano?.franquia].filter(Boolean).join(' · ')}
+                          </p>
+                        </div>
+                      </div>
+                      <CamposAtivacao
+                        id={`chip-${i}`}
+                        valor={form.chips[i] ?? ATIVACAO_VAZIA}
+                        cobertura={chip.plano?.paises ?? []}
+                        dias={chip.plano?.dias ?? null}
+                        erroData={erroAtivacao('travel_start', i)}
+                        erroPaises={erroAtivacao('countries', i)}
+                        onChange={(parte) => alterarChip(i, parte)}
+                      />
+                    </div>
+                  ))
+                )}
 
                 <div className="grupo">
                   <label htmlFor="observation" className="rotulo">Observações (opcional)</label>
@@ -556,31 +635,66 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
             </div>
 
             <aside className="resumo lg:sticky lg:top-6">
-              <h2 className="text-xl font-light text-slate-900">Seu plano</h2>
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="text-xl font-light text-slate-900">{varios ? 'Seus chips' : 'Seu plano'}</h2>
+                <span className="text-xs font-light text-slate-400">pedido final {consulta.pedidoFinal}</span>
+              </div>
 
-              <div className="mt-6 flex gap-4">
-                <Capa tipo={tipo} />
-                <div className="min-w-0">
-                  <p className="text-[15px] leading-snug text-slate-900">{plano?.destino || TIPO_TEXTO[tipo]}</p>
-                  <p className="mt-1 text-xs font-light leading-snug text-slate-500">{plano?.titulo || escolhido?.titulo}</p>
-                  <p className="mt-2 text-xs font-light text-slate-400">
-                    {TIPO_TEXTO[tipo]}
-                    {consulta.pedidoFinal && <> · pedido final {consulta.pedidoFinal}</>}
-                  </p>
-                  {consulta.iccid && <p className="mt-0.5 font-mono text-[11px] text-slate-400">{consulta.iccid}</p>}
+              <ul className="mt-6 space-y-5">
+                {chips.map((chip, i) => {
+                  const a = ativacaoDo(i);
+                  const fim = fimDaVigencia(a.travel_start, chip.plano?.dias);
+                  return (
+                    <li key={i} className="flex gap-4">
+                      <Capa tipo={chip.tipo} pequena={varios} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] leading-snug text-slate-900">{chip.plano?.destino || TIPO_TEXTO[chip.tipo]}</p>
+                        <p className="mt-0.5 text-xs font-light leading-snug text-slate-500">
+                          {varios
+                            ? [nomeDoChip(chip, i, chips.length), chip.plano?.dias && `${chip.plano.dias} dias`, chip.plano?.franquia].filter(Boolean).join(' · ')
+                            : chip.plano?.titulo || escolhido?.titulo}
+                        </p>
+                        {chip.iccid && <p className="mt-0.5 font-mono text-[11px] text-slate-400">{chip.iccid}</p>}
+                        {varios && fim && (
+                          <p className="mt-1 text-xs font-light text-marca">
+                            {formatarDataBR(a.travel_start)} até {formatarDataBR(fim)}
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {!varios && chips[0] && (
+                <>
+                  <dl className="mt-6 space-y-3 text-sm">
+                    <Linha rotulo="Período" valor={chips[0].plano?.dias ? `${chips[0].plano.dias} dias` : '—'} />
+                    <Linha rotulo="Internet" valor={chips[0].plano?.franquia || '—'} />
+                    <Linha rotulo="Ativação" valor={form.comum.travel_start ? formatarDataBR(form.comum.travel_start) : '—'} />
+                  </dl>
+                  <div className="mt-5 border-t border-slate-300/70 pt-5">
+                    <Linha
+                      rotulo="Válido até"
+                      valor={formatarDataBR(fimDaVigencia(form.comum.travel_start, chips[0].plano?.dias)) || '—'}
+                      forte
+                    />
+                  </div>
+                </>
+              )}
+
+              {varios && (
+                <div className="mt-6 border-t border-slate-300/70 pt-5">
+                  <Linha rotulo="Total" valor={`${chips.length} chips`} forte />
                 </div>
-              </div>
+              )}
 
-              <dl className="mt-6 space-y-3 text-sm">
-                <Linha rotulo="Período" valor={plano?.dias ? `${plano.dias} dias` : '—'} />
-                <Linha rotulo="Internet" valor={plano?.franquia || '—'} />
-                <Linha rotulo="Ativação" valor={form.travel_start ? formatarDataBR(form.travel_start) : '—'} />
-              </dl>
-              <div className="mt-5 border-t border-slate-300/70 pt-5">
-                <Linha rotulo="Válido até" valor={vigenciaFim ? formatarDataBR(vigenciaFim) : '—'} forte />
-              </div>
-
-              {consulta.jaCadastrado && (
+              {consulta.jaEnviados > 0 && (
+                <p className="mt-5 rounded-lg bg-white px-3 py-2.5 text-xs font-light leading-relaxed text-slate-500">
+                  {consulta.jaEnviados} chip{consulta.jaEnviados > 1 ? 's' : ''} deste pedido já {consulta.jaEnviados > 1 ? 'foram cadastrados' : 'foi cadastrado'}.
+                </p>
+              )}
+              {chips.some((c) => c.jaCadastrado) && (
                 <p className="mt-5 rounded-lg bg-amber-50 px-3 py-2.5 text-xs font-light leading-relaxed text-amber-800">
                   O envio anterior deste pedido não foi concluído. Confira os dados e envie para concluir.
                 </p>
@@ -600,7 +714,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
               <Erro campo="lgpd" />
 
               <button type="submit" className="botao mt-6" disabled={!!carregando}>
-                {carregando ? 'Enviando…' : 'Enviar cadastro'}
+                {carregando ? 'Enviando…' : varios ? `Enviar cadastro dos ${chips.length} chips` : 'Enviar cadastro'}
               </button>
               <button type="button" onClick={voltarParaPedidos} className="link mt-4 block w-full text-center text-sm">
                 Trocar pedido
@@ -615,17 +729,24 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
             <div>
               <h1 className="titulo">Cadastro recebido</h1>
               <p className="subtitulo leading-relaxed">
-                {resultado.vinculadoAoPedido
-                  ? 'Localizamos o seu pedido. Nossa equipe confere e segue com a ativação.'
-                  : 'Nossa equipe vai localizar o seu pedido e seguir com a ativação.'}
+                {resultado.chips.length > 1
+                  ? `Recebemos os dados dos ${resultado.chips.length} chips. Nossa equipe confere e segue com a ativação.`
+                  : 'Recebemos os seus dados. Nossa equipe confere e segue com a ativação.'}
               </p>
             </div>
-            {resultado.vigenciaFim && (
-              <div className="resumo !p-4 text-sm font-light text-slate-600">
-                Ativação em <span className="font-normal text-slate-900">{formatarDataBR(form.travel_start)}</span> · válido até{' '}
-                <span className="font-normal text-slate-900">{formatarDataBR(resultado.vigenciaFim)}</span>
-              </div>
-            )}
+            <ul className="resumo space-y-2 !p-4 text-sm font-light text-slate-600">
+              {resultado.chips.map((c, i) => (
+                <li key={i}>
+                  {resultado.chips.length > 1 && <span className="text-slate-400">Chip {i + 1} · </span>}
+                  Ativação em <span className="font-normal text-slate-900">{formatarDataBR(c.travel_start)}</span>
+                  {c.vigenciaFim && (
+                    <>
+                      {' '}· válido até <span className="font-normal text-slate-900">{formatarDataBR(c.vigenciaFim)}</span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
             <div className="space-y-3">
               <p className="text-xs font-light text-slate-400">Os dados enviados não podem mais ser alterados por aqui.</p>
               <BotaoSuporte link={suporte} texto="Precisa corrigir algo? Fale com o suporte" />
@@ -660,6 +781,133 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   );
 }
 
+function ErroTexto({ texto }: { texto?: string }) {
+  return texto ? <p className="mt-1.5 text-xs text-red-600">{texto}</p> : null;
+}
+
+/** Data de ativação e países de um chip — ou de todos, com "mesmos dados". */
+function CamposAtivacao({
+  id,
+  valor,
+  cobertura,
+  dias,
+  erroData,
+  erroPaises,
+  onChange,
+}: {
+  id: string;
+  valor: Ativacao;
+  cobertura: string[];
+  /** Período do plano, para mostrar até quando vale. Nulo = não mostra. */
+  dias: number | null;
+  erroData?: string;
+  erroPaises?: string;
+  onChange: (parte: Partial<Ativacao>) => void;
+}) {
+  const [filtro, setFiltro] = useState('');
+  const visiveis = useMemo(() => {
+    const f = chaveTexto(filtro);
+    return f ? cobertura.filter((p) => chaveTexto(p).includes(f)) : cobertura;
+  }, [cobertura, filtro]);
+  const fim = fimDaVigencia(valor.travel_start, dias);
+
+  function alternar(pais: string) {
+    onChange({ countries: valor.countries.includes(pais) ? valor.countries.filter((p) => p !== pais) : [...valor.countries, pais] });
+  }
+
+  return (
+    <>
+      <div className="grupo">
+        <label htmlFor={`travel_start-${id}`} className="rotulo">Data de ativação</label>
+        <input
+          id={`travel_start-${id}`}
+          type="date"
+          min={hojeIso()}
+          className={`campo ${erroData ? 'campo-erro' : ''}`}
+          value={valor.travel_start}
+          onChange={(e) => onChange({ travel_start: e.target.value })}
+        />
+        <ErroTexto texto={erroData} />
+        {fim && (
+          <p className="ajuda">
+            Válido de {formatarDataBR(valor.travel_start)} até {formatarDataBR(fim)} · {dias} dias
+          </p>
+        )}
+      </div>
+
+      <div className="grupo">
+        <span className="rotulo">Países que vai visitar</span>
+        {cobertura.length >= 1 ? (
+          <div className={`rounded-lg border px-4 pb-4 pt-5 ${erroPaises ? 'border-red-400' : 'border-slate-400/70'}`}>
+            {cobertura.length === 1 ? (
+              <div className="flex items-center gap-2 text-sm font-light text-slate-500">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-marca px-3 py-1.5 text-sm text-white">
+                  <Icone nome="check" className="h-3.5 w-3.5" /> {cobertura[0]}
+                </span>
+                incluído no plano
+              </div>
+            ) : (
+              <>
+                <div className="mb-3 flex items-center justify-between gap-2 text-xs font-light text-slate-400">
+                  <span>O plano cobre {cobertura.length} países. Toque para marcar.</span>
+                  {valor.countries.length > 0 && (
+                    <span className="shrink-0 rounded-full bg-marca-claro px-2 py-0.5 text-marca">
+                      {valor.countries.length} selecionado{valor.countries.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                {cobertura.length > 8 && (
+                  <div className="relative mb-3">
+                    <Icone nome="busca" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="search"
+                      placeholder="Buscar país"
+                      className="campo h-10 pl-9 text-sm"
+                      value={filtro}
+                      onChange={(e) => setFiltro(e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="flex max-h-60 flex-wrap gap-2 overflow-y-auto">
+                  {visiveis.map((p) => {
+                    const marcado = valor.countries.includes(p);
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        aria-pressed={marcado}
+                        onClick={() => alternar(p)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
+                          marcado
+                            ? 'border-marca bg-marca text-white'
+                            : 'border-slate-300 bg-white font-light text-slate-700 hover:border-marca hover:text-marca'
+                        }`}
+                      >
+                        {marcado && <Icone nome="check" className="h-3.5 w-3.5" />}
+                        {p}
+                      </button>
+                    );
+                  })}
+                  {visiveis.length === 0 && <p className="text-sm font-light text-slate-400">Nenhum país com esse nome no plano.</p>}
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <input
+            id={`countries-${id}`}
+            placeholder="Ex.: Portugal, Espanha"
+            className={`campo ${erroPaises ? 'campo-erro' : ''}`}
+            value={valor.countries_texto}
+            onChange={(e) => onChange({ countries_texto: e.target.value })}
+          />
+        )}
+        <ErroTexto texto={erroPaises} />
+      </div>
+    </>
+  );
+}
+
 function Linha({ rotulo, valor, forte = false }: { rotulo: string; valor: string; forte?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-4 text-sm">
@@ -670,14 +918,19 @@ function Linha({ rotulo, valor, forte = false }: { rotulo: string; valor: string
 }
 
 /** "Capa" do produto, como a do livro no checkout: um bloco azul com o ícone do chip. */
-function Capa({ tipo, pequena = false }: { tipo: TipoChip; pequena?: boolean }) {
+function Capa({ tipo, pequena = false, quantidade = 1 }: { tipo: TipoChip; pequena?: boolean; quantidade?: number }) {
   return (
     <span
-      className={`flex shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-marca to-marca-profundo text-white ${
+      className={`relative flex shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-marca to-marca-profundo text-white ${
         pequena ? 'h-12 w-10' : 'h-20 w-16'
       }`}
     >
       <Icone nome={tipo === 'fisico' ? 'chip' : 'esim'} className={pequena ? 'h-5 w-5' : 'h-7 w-7'} />
+      {quantidade > 1 && (
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[11px] font-medium text-marca ring-1 ring-marca-borda">
+          {quantidade}
+        </span>
+      )}
     </span>
   );
 }
