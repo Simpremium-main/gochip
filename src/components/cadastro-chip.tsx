@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import {
   cadastroSchema, chaveDoCampo, pedidosSchema,
-  type ChipConsulta, type Consulta, type PedidoPendente, type ResumoCadastro, type TipoChip,
+  type ChipConsulta, type Consulta, type ListaPedidos, type PedidoPendente, type ResumoCadastro, type TipoChip,
 } from '@/lib/cadastro-schema';
 import { chaveIccid, formatarCpf, soDigitos } from '@/lib/documentos';
 import { chaveTexto, fimDaVigencia, formatarDataBR, paisesDaLista } from '@/lib/plano';
@@ -50,6 +50,8 @@ const VAZIO: Formulario = {
   chips: [],
   iccids: [],
 };
+
+const LISTA_VAZIA: ListaPedidos = { cpfEncontrado: false, pedidos: [], recentes: [] };
 
 const TIPO_TEXTO: Record<TipoChip, string> = { fisico: 'Chip físico', virtual: 'eSIM' };
 
@@ -105,7 +107,8 @@ const textoDosChips = (n: number, tipos: TipoChip[]) =>
 export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   const [etapa, setEtapa] = useState<Etapa>('cpf');
   const [cpf, setCpf] = useState('');
-  const [pedidos, setPedidos] = useState<PedidoPendente[]>([]);
+  const [lista, setLista] = useState<ListaPedidos>(LISTA_VAZIA);
+  const pedidos = lista.pedidos;
   const [escolhido, setEscolhido] = useState<PedidoPendente | null>(null);
   const [consulta, setConsulta] = useState<Consulta | null>(null);
   const [form, setForm] = useState<Formulario>(VAZIO);
@@ -118,7 +121,9 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
     whatsappSuporte,
     escolhido
       ? `Olá! Já fiz o cadastro do pedido final ${escolhido.pedidoFinal} no GoChip e preciso alterar um dado.`
-      : 'Olá! Não encontrei o meu pedido para ativar no GoChip.',
+      : lista.recentes.length
+        ? 'Olá! Já enviei os dados de ativação no GoChip e preciso alterar um dado.'
+        : 'Olá! Não encontrei o meu pedido para ativar no GoChip.',
   );
 
   const chips = consulta?.chips ?? [];
@@ -203,7 +208,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
         if (dados.campos) setErros(dados.campos);
         throw new Error(dados.error || 'Falha na consulta');
       }
-      setPedidos(dados.pedidos as PedidoPendente[]);
+      setLista(dados as ListaPedidos);
       setErros({});
       setEtapa('pedidos');
     } catch (err) {
@@ -319,7 +324,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
     setCarregando('cpf');
     try {
       const { res, dados } = await postar('/api/pedidos', { cpf });
-      if (res.ok) setPedidos(dados.pedidos as PedidoPendente[]);
+      if (res.ok) setLista(dados as ListaPedidos);
     } catch {
       // Sem rede: mostra a lista que já estava na tela.
     } finally {
@@ -331,7 +336,7 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
   function recomecar() {
     setEtapa('cpf');
     setCpf('');
-    setPedidos([]);
+    setLista(LISTA_VAZIA);
     setEscolhido(null);
     setConsulta(null);
     setForm(VAZIO);
@@ -395,9 +400,13 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
         {etapa === 'pedidos' && (
           <div className="mx-auto max-w-md space-y-6">
             <div className="text-center">
-              <h1 className="titulo">Escolha o pedido</h1>
+              <h1 className="titulo">
+                {pedidos.length > 0 ? 'Escolha o pedido' : lista.recentes.length > 0 ? 'Seus pedidos' : 'CPF não encontrado'}
+              </h1>
               <p className="subtitulo">
-                Compras do CPF <span className="font-normal text-slate-600">{cpf}</span> ainda sem data de ativação
+                {pedidos.length > 0 ? 'Compras do CPF ' : lista.recentes.length > 0 ? 'Últimas compras do CPF ' : 'Nenhuma compra com o CPF '}
+                <span className="font-normal text-slate-600">{cpf}</span>
+                {pedidos.length > 0 && ' ainda sem data de ativação'}
               </p>
             </div>
 
@@ -436,13 +445,48 @@ export function CadastroChip({ whatsappSuporte }: { whatsappSuporte: string }) {
                   );
                 })}
               </ul>
+            ) : lista.recentes.length > 0 ? (
+              <>
+                <div className="flex items-start gap-3 rounded-xl bg-marca-claro px-4 py-3.5 text-sm font-light leading-relaxed text-slate-700">
+                  <Icone nome="check" className="mt-0.5 h-4 w-4 shrink-0 text-marca" />
+                  <p>
+                    Os dados de ativação {lista.recentes.length > 1 ? 'destes pedidos' : 'deste pedido'} já foram enviados.
+                    Não há nenhuma compra deste CPF aguardando cadastro.
+                  </p>
+                </div>
+                <ul className="space-y-3">
+                  {lista.recentes.map((p) => {
+                    const detalhes = [p.destino, p.dias && `${p.dias} dias`, p.franquia].filter(Boolean).join(' · ');
+                    return (
+                      <li key={p.pedido_id} className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-4">
+                        <Capa tipo={p.tipos[0] ?? 'fisico'} pequena quantidade={p.chips} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[15px] text-slate-900">
+                            {textoDosChips(p.chips, p.tipos)}{' '}
+                            <span className="text-xs font-light text-slate-400">· final {p.pedidoFinal}</span>
+                          </span>
+                          <span className="mt-0.5 block truncate text-sm font-light text-slate-500">{detalhes || p.titulo}</span>
+                          <span className="mt-1 block text-xs font-light text-slate-400">
+                            {p.compradoEm && <>Compra em {formatarDataBR(p.compradoEm)}</>}
+                            {p.ativacao && <> · ativação em {formatarDataBR(p.ativacao)}</>}
+                          </span>
+                          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+                            <Icone nome="check" className="h-3 w-3" /> Dados enviados
+                          </span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <BotaoSuporte link={suporte} texto="Alterar algo? Fale com o suporte" />
+              </>
             ) : (
               <div className="resumo space-y-4 text-center text-sm font-light leading-relaxed text-slate-600">
                 <p>
-                  Não encontramos compras pendentes de ativação neste CPF. Confira se é o CPF da conta do Mercado Livre
-                  que fez a compra ou fale com o suporte.
+                  Não encontramos compras do Mercado Livre neste CPF. Confira se é o CPF da conta que fez a compra ou fale
+                  com o suporte.
                 </p>
-                <BotaoSuporte link={suporte} texto="Falar com o suporte no WhatsApp" />
+                <BotaoSuporte link={suporte} texto="Falar com o suporte" />
               </div>
             )}
 

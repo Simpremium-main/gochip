@@ -7,7 +7,7 @@ import {
 } from '@/lib/plano';
 import {
   MSG_ICCID,
-  type Cadastro, type Consulta, type ConsultaDados, type ListaPedidos, type PedidoPendente, type PedidosDados,
+  type Cadastro, type Consulta, type ConsultaDados, type ListaPedidos, type PedidoEnviado, type PedidoPendente, type PedidosDados,
   type TipoChip,
 } from '@/lib/cadastro-schema';
 
@@ -82,6 +82,8 @@ export interface PedidoML {
 
 const COLUNAS_PEDIDO = 'id, order_id, plan_name, customer_name, customer_cpf, customer_email, customer_phone, confirmation_status, created_at';
 const MAX_CHIPS_POR_ITEM = 20;
+/** Pedidos já enviados mostrados quando o CPF não tem nenhum pendente. */
+const MAX_RECENTES = 5;
 
 /** O CPF pode estar gravado no pedido só com dígitos ou formatado. */
 const grafiasCpf = (cpf: string) => [...new Set([cpf, formatarCpf(cpf)])];
@@ -185,6 +187,8 @@ const chipPendente = (chip: ChipML, cadastro: any) => !chip.checkin && !estaBloq
 /**
  * Passo 1: os pedidos do Mercado Livre deste CPF com chips que ainda não têm data de
  * ativação — nem no item do pedido (`checkin`), nem num cadastro do GoChip já enviado.
+ * Sem nenhum pendente, devolve os últimos pedidos do CPF, para o cliente ver que os dados
+ * já foram enviados (e não achar que o CPF não foi encontrado).
  */
 export async function pedidosPendentes(dados: PedidosDados): Promise<ListaPedidos> {
   const { data, error } = await supabaseServer
@@ -200,27 +204,56 @@ export async function pedidosPendentes(dados: PedidosDados): Promise<ListaPedido
   const [itens, mestre, cadastros] = await Promise.all([itensDosPedidos(ids), mestreDosPedidos(ids), cadastrosDosPedidos(ids)]);
 
   const lista: PedidoPendente[] = [];
+  const recentes: PedidoEnviado[] = [];
   for (const p of pedidos) {
     const id = String(p.id);
-    const pendentes = chipsDoPedido(p, itens, mestre)
-      .map((chip) => ({ chip, cadastro: cadastroDoChip(cadastros, id, chip) }))
-      .filter(({ chip, cadastro }) => chipPendente(chip, cadastro));
-    if (pendentes.length === 0) continue;
-    const lido = lerTitulo(pendentes[0].chip.titulo || String(p.plan_name || ''));
-    lista.push({
+    const situacao = chipsDoPedido(p, itens, mestre).map((chip) => ({ chip, cadastro: cadastroDoChip(cadastros, id, chip) }));
+    const pendentes = situacao.filter(({ chip, cadastro }) => chipPendente(chip, cadastro));
+    const base = {
       pedido_id: id,
       pedidoFinal: String(p.order_id).slice(-4),
+      compradoEm: p.created_at ? String(p.created_at).slice(0, 10) : null,
+    };
+
+    if (pendentes.length === 0) {
+      // Pedido já com os dados enviados: só entra na lista se nenhum pedido estiver pendente.
+      if (recentes.length < MAX_RECENTES) {
+        const lido = lerTitulo(situacao[0]?.chip.titulo || String(p.plan_name || ''));
+        const datas = situacao
+          .map(({ chip, cadastro }) => chip.checkin || (cadastro?.travel_start ? String(cadastro.travel_start).slice(0, 10) : null))
+          .filter((d): d is string => !!d)
+          .sort();
+        recentes.push({
+          ...base,
+          titulo: lido.titulo,
+          tipos: [...new Set(situacao.map(({ chip }) => chip.tipo))],
+          chips: situacao.length,
+          destino: lido.destino,
+          dias: lido.dias,
+          franquia: lido.franquia,
+          ativacao: datas[0] ?? null,
+        });
+      }
+      continue;
+    }
+
+    const lido = lerTitulo(pendentes[0].chip.titulo || String(p.plan_name || ''));
+    lista.push({
+      ...base,
       titulo: lido.titulo,
       tipos: [...new Set(pendentes.map(({ chip }) => chip.tipo))],
       chips: pendentes.length,
-      compradoEm: p.created_at ? String(p.created_at).slice(0, 10) : null,
       destino: lido.destino,
       dias: lido.dias,
       franquia: lido.franquia,
       envioIncompleto: pendentes.some(({ cadastro }) => !!cadastro),
     });
   }
-  return { pedidos: lista };
+  return {
+    cpfEncontrado: pedidos.length > 0,
+    pedidos: lista,
+    recentes: lista.length === 0 ? recentes : [],
+  };
 }
 
 /**

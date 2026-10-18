@@ -31,7 +31,9 @@ Só pedidos do **Mercado Livre**.
 5. **Pronto**: cada chip é gravado no Pedido Central (uma linha e uma submissão da baixa por chip)
    e entra na baixa do pedido.
 
-CPF sem pedido pendente: a tela mostra o botão do WhatsApp do suporte.
+CPF com pedidos, mas nenhum pendente: a tela mostra os **últimos 5 pedidos** com o aviso de que os
+dados de ativação já foram enviados (e a data de ativação de cada um), mais o botão do WhatsApp do
+suporte. "CPF não encontrado" só aparece quando o CPF não tem nenhum pedido no Mercado Livre.
 
 ## O que é gravado no Pedido Central
 
@@ -69,7 +71,8 @@ Scripts: `npm test` (validações), `npm run typecheck`, `npm run build`.
 
 ## API
 
-- `POST /api/pedidos` `{ cpf }` → `{ pedidos: [{ pedido_id, pedidoFinal, titulo, tipos, chips, compradoEm, destino, dias, franquia, envioIncompleto }] }`
+- `POST /api/pedidos` `{ cpf }` → `{ cpfEncontrado, pedidos: [{ pedido_id, pedidoFinal, titulo, tipos, chips, compradoEm, destino, dias, franquia, envioIncompleto }], recentes: [{ …, ativacao }] }`
+  (`recentes` = últimos 5 pedidos já enviados, só quando `pedidos` vem vazio)
 - `POST /api/consulta` `{ cpf, pedido_id }` →
   `{ pedidoFinal, chips: [{ item_id, posicao, tipo, iccid, plano, travel_start, countries, jaCadastrado }], jaEnviados, preenchimento, bloqueado, resumo }`;
   `404` se o pedido não é do CPF ou já tem data de ativação

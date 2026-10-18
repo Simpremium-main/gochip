@@ -124,9 +124,28 @@ export interface PedidoPendente {
   envioIncompleto: boolean;
 }
 
+/** Um pedido do CPF que já tem os dados de ativação enviados. */
+export interface PedidoEnviado {
+  pedido_id: string;
+  pedidoFinal: string;
+  titulo: string;
+  tipos: TipoChip[];
+  chips: number;
+  compradoEm: string | null;
+  destino: string | null;
+  dias: number | null;
+  franquia: string | null;
+  /** Primeira data de ativação do pedido (lançada pela equipe ou enviada no GoChip). */
+  ativacao: string | null;
+}
+
 /** Resposta de POST /api/pedidos. */
 export interface ListaPedidos {
+  /** O CPF tem algum pedido no Mercado Livre (pendente ou não). */
+  cpfEncontrado: boolean;
   pedidos: PedidoPendente[];
+  /** Sem nenhum pendente: os últimos 5 pedidos do CPF, todos com os dados já enviados. */
+  recentes: PedidoEnviado[];
 }
 
 /** Um chip pendente do pedido, com o plano dele. */
