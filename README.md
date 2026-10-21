@@ -67,7 +67,7 @@ Regras:
    (convenção do Pedido Central: DDL não é executado pelo app).
 2. Copie `.env.example` para `.env.local` e preencha `NEXT_PUBLIC_SUPABASE_URL` e
    `SUPABASE_SERVICE_ROLE_KEY` (os mesmos do Pedido Central).
-3. `npm install && npm run dev` → http://localhost:9010
+3. `npm install && npm run dev` → http://localhost:9010/ativar (a raiz redireciona para a loja no Mercado Livre)
 
 Scripts: `npm test` (validações), `npm run typecheck`, `npm run build`.
 
